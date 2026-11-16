@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ko">
 <head>
@@ -7,15 +8,150 @@
   <meta name="description" content="IssueFlow — GitHub 이슈 분석 및 작업 자동화 콘솔">
   <title>IssueFlow — 이슈 관리 워크스페이스</title>
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* GitHub 로그인 및 저장소 연결 화면 */
+    .setup-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:#f5f6f4;overflow-y:auto}
+    .setup-screen[hidden],.setup-step[hidden],.setup-panel[hidden]{display:none!important}
+    .setup-card{width:100%;max-width:480px;padding:36px;box-sizing:border-box;background:#fff;border:1px solid #e6e9e5;border-radius:18px;box-shadow:0 16px 50px rgba(20,30,25,.06)}
+    .setup-brand{margin-bottom:26px;color:#287b55;font-size:23px;font-weight:800}
+    .setup-brand span{margin-left:8px;color:#26352d;font-size:16px}
+    .setup-card h1{margin:0 0 8px;font-size:25px;color:#202a24}
+    .setup-description{margin:0 0 24px;font-size:14px;line-height:1.7;color:#738078}
+    .setup-card label{display:block;margin:16px 0 7px;font-size:13px;font-weight:600;color:#34433a}
+    .setup-card label small{color:#8a958d;font-weight:400}
+    .setup-card input,.setup-card select,.setup-card textarea{width:100%;box-sizing:border-box;padding:13px;border:1px solid #dce2dc;border-radius:9px;background:#fff;color:#25352b;font:inherit}
+    .setup-card input:focus,.setup-card select:focus,.setup-card textarea:focus{outline:2px solid #a9d6be;border-color:#398c63}
+    .setup-btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;margin-top:18px;padding:14px;border:0;border-radius:9px;background:#287b55;color:#fff;font:inherit;font-weight:700;cursor:pointer;text-decoration:none;box-sizing:border-box}
+    .setup-btn:hover{background:#216947}
+    .setup-btn:disabled{opacity:.6;cursor:wait}
+    .setup-btn.secondary{background:#f2f5f2;color:#34433a;border:1px solid #e1e7e1}
+    .setup-btn.secondary:hover{background:#e9efea}
+    .setup-btn svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8}
+    .setup-divider{display:flex;align-items:center;gap:12px;margin:22px 0;color:#9aa49d;font-size:12px}
+    .setup-divider:before,.setup-divider:after{content:"";flex:1;height:1px;background:#e6eae6}
+    .setup-note{margin:16px 0 0;font-size:12px;line-height:1.7;color:#89938c;text-align:center}
+    .setup-error{margin:12px 0 0;color:#b42318;font-size:13px;line-height:1.6}
+    .setup-user{display:flex;align-items:center;gap:12px;padding:12px;background:#f6f8f6;border-radius:10px}
+    .setup-user img{width:38px;height:38px;border-radius:50%}
+    .setup-user strong{font-size:14px;color:#26352d}
+    .setup-user small{display:block;margin-top:3px;color:#819087;font-size:12px}
+    .setup-repo-list{max-height:230px;overflow-y:auto;margin-top:14px}
+    .setup-repo-item{display:flex;align-items:center;gap:10px;width:100%;padding:13px;margin-bottom:8px;text-align:left;background:#fff;border:1px solid #e1e7e1;border-radius:9px;cursor:pointer;font:inherit}
+    .setup-repo-item:hover{border-color:#398c63;background:#f8fbf9}
+    .setup-repo-item strong{display:block;font-size:13px;color:#26352d;overflow-wrap:anywhere}
+    .setup-repo-item small{display:block;margin-top:4px;font-size:11px;color:#849087}
+    .setup-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:20px 0}
+    .setup-tab{padding:12px 8px;border:1px solid #e0e6e0;border-radius:9px;background:#fff;color:#69766e;font-weight:600;cursor:pointer}
+    .setup-tab.active{border-color:#287b55;background:#edf7f0;color:#287b55}
+    .setup-hint{font-size:12px;line-height:1.6;color:#839087}
+    @media(max-width:520px){.setup-card{padding:26px 22px}}
+  </style>
 </head>
 <body>
-  <!-- 아이콘은 따로 설치하지 않고 SVG로 넣어둠 -->
+
+  <!-- GitHub 로그인 및 워크스페이스 설정 -->
+  <div id="setupScreen" class="setup-screen">
+    <div class="setup-card">
+      <div class="setup-brand">if. <span>IssueFlow AI</span></div>
+
+      <!-- 1단계: GitHub 로그인 -->
+      <section id="setupLogin" class="setup-step">
+        <h1>GitHub로 시작하기</h1>
+        <p class="setup-description">GitHub 계정을 연결하고 이슈 관리 워크스페이스를 시작하세요. 별도의 GitHub 토큰 입력은 필요하지 않습니다.</p>
+        <a id="githubLoginBtn" class="setup-btn" href="/auth/github">
+          <svg viewBox="0 0 24 24"><path d="M9 19c-4.5 1.3-4.5-2-6.3-2.4M14 22v-3.2c0-1.1.3-1.7.9-2.1 3.2-.4 6.3-1.8 6.3-7.1 0-1.5-.5-2.8-1.3-3.7 0 0-1.5-.4-4 1.9a13 13 0 0 0-7.2 0C6 1.9 4.5 2.3 4.5 2.3c-.5 1.1-.5 2.7-.3 3.7A5.6 5.6 0 0 0 2.9 10c0 5.3 3.1 6.7 6.3 7.1.6.4.9 1 .9 2.1V22"/></svg>
+          GitHub로 계속하기
+        </a>
+        <p class="setup-note">GitHub App 인증을 사용하며 승인한 저장소에만 접근합니다.</p>
+      </section>
+
+      <!-- 2단계: 저장소 선택 또는 생성 -->
+      <section id="setupRepository" class="setup-step" hidden>
+        <h1>저장소 연결</h1>
+        <p class="setup-description">기존 GitHub 저장소를 선택하거나 새 저장소를 만들어 시작하세요.</p>
+
+        <div class="setup-user">
+          <img id="setupAvatar" src="" alt="GitHub 프로필" hidden>
+          <div>
+            <strong id="setupUsername">GitHub 사용자</strong>
+            <small>GitHub 계정 연결됨</small>
+          </div>
+        </div>
+
+        <div class="setup-tabs">
+          <button type="button" id="selectRepoTab" class="setup-tab active">기존 저장소</button>
+          <button type="button" id="createRepoTab" class="setup-tab">새 저장소 생성</button>
+        </div>
+
+        <div id="selectRepoPanel" class="setup-panel">
+          <label for="setupRepoSearch">저장소 검색</label>
+          <input id="setupRepoSearch" type="search" placeholder="저장소 이름 검색" autocomplete="off">
+          <div id="setupRepoList" class="setup-repo-list">
+            <p class="setup-hint">저장소 목록을 불러오는 중입니다.</p>
+          </div>
+          <p class="setup-hint">저장소가 보이지 않으면 GitHub App 설치 및 접근 권한을 확인하세요.</p>
+          <a id="installGithubAppBtn" class="setup-btn secondary" href="https://github.com/settings/installations" target="_blank" rel="noopener noreferrer">GitHub App 설치 관리</a>
+        </div>
+
+        <div id="createRepoPanel" class="setup-panel" hidden>
+          <form id="createRepoForm">
+            <label for="newRepoName">저장소 이름</label>
+            <input id="newRepoName" type="text" placeholder="my-issueflow-project" maxlength="100" pattern="[A-Za-z0-9_.-]+" required>
+
+            <label for="newRepoDescription">설명 <small>(선택)</small></label>
+            <input id="newRepoDescription" type="text" placeholder="IssueFlow AI 테스트 저장소" maxlength="350">
+
+            <label for="newRepoVisibility">공개 범위</label>
+            <select id="newRepoVisibility">
+              <option value="private">Private - 비공개</option>
+              <option value="public">Public - 공개</option>
+            </select>
+
+            <p class="setup-hint">README 파일을 포함한 저장소를 생성합니다. 생성 후 GitHub App에 저장소 접근 권한을 승인해야 할 수 있습니다.</p>
+
+            <button id="createRepoSubmit" class="setup-btn" type="submit">새 저장소 생성하기</button>
+          </form>
+        </div>
+
+        <p id="repoSetupError" class="setup-error" role="alert"></p>
+      </section>
+
+      <!-- 3단계: OpenAI 연결 -->
+      <section id="setupCredentials" class="setup-step" hidden>
+        <h1>AI 분석 설정</h1>
+        <p class="setup-description">선택한 GitHub 저장소에 OpenAI 분석 기능을 연결하세요.</p>
+
+        <div class="setup-user">
+          <div>
+            <strong id="selectedRepoName">선택한 저장소</strong>
+            <small>GitHub 저장소 연결됨</small>
+          </div>
+        </div>
+
+        <form id="setupForm">
+          <label for="setupOpenaiKey">OpenAI API Key</label>
+          <input id="setupOpenaiKey" type="password" placeholder="OpenAI API 키 입력" autocomplete="off" required>
+
+          <label for="setupDiscord">Discord Webhook URL <small>(선택)</small></label>
+          <input id="setupDiscord" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off">
+
+          <p id="setupError" class="setup-error" role="alert"></p>
+          <button id="setupSubmit" class="setup-btn" type="submit">워크스페이스 시작하기</button>
+          <button id="changeRepoBtn" class="setup-btn secondary" type="button">다른 저장소 선택</button>
+        </form>
+
+        <p class="setup-note">OpenAI API 키는 브라우저 메모리에만 보관하며 새로고침하면 다시 입력해야 합니다. 분석 요청 시 서버로 전송됩니다.</p>
+      </section>
+    </div>
+  </div>
+
+  <!-- 기존 대시보드 SVG 아이콘 -->
   <svg aria-hidden="true" class="sprite" xmlns="http://www.w3.org/2000/svg">
     <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
     <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></symbol>
     <symbol id="i-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 10-12h-7V2z"/></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><path d="M10 2h4l.6 2.3 2 1.2 2.3-.7 2 3.5-1.7 1.7v2.3l1.7 1.7-2 3.5-2.3-.7-2 1.2L14 22h-4l-.6-2.3-2-1.2-2.3.7-2-3.5 1.7-1.7v-2.3L3.1 10l2-3.5 2.3.7 2-1.2L10 2z"/><circle cx="12" cy="12" r="3"/></symbol>
-    <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.5 1.3-4.5-2-6.3-2.4M14 22v-3.2c0-1.1.3-1.7.9-2.1 3.2-.4 6.3-1.8 6.3-7.1 0-1.5-.5-2.8-1.3-3.7.2-1 .2-2.6-.3-3.7 0 0-1.5-.4-4 1.9a13 13 0 0 0-7.2 0C6 1.9 4.5 2.3 4.5 2.3c-.5 1.1-.5 2.7-.3 3.7A5.6 5.6 0 0 0 2.9 10c0 5.3 3.1 6.7 6.3 7.1.6.4.9 1 .9 2.1V22"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.5 1.3-4.5-2-6.3-2.4M14 22v-3.2c0-1.1.3-1.7.9-2.1 3.2-.4 6.3-1.8 6.3-7.1 0-1.5-.5-2.8-1.3-3.7 0 0-1.5-.4-4 1.9a13 13 0 0 0-7.2 0C6 1.9 4.5 2.3 4.5 2.3c-.5 1.1-.5 2.7-.3 3.7A5.6 5.6 0 0 0 2.9 10c0 5.3 3.1 6.7 6.3 7.1.6.4.9 1 .9 2.1V22"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
@@ -50,14 +186,13 @@
     <main class="main-area">
       <header class="topbar">
         <div class="topbar-left"><button type="button" class="mobile-menu icon-button" id="mobileMenu" aria-label="메뉴 열기"><svg class="icon"><use href="#i-list"/></svg></button><span class="breadcrumb-parent">Workspace</span><span class="breadcrumb-slash">/</span><strong id="breadcrumbTitle">대시보드</strong></div>
-        <div class="topbar-actions"><span class="topbar-live"><span class="pulse-dot"></span><span id="topMode">GitHub workspace</span></span><span class="topbar-divider"></span><button type="button" class="icon-button" id="refreshBtn" title="새로고침" aria-label="새로고침"><svg class="icon"><use href="#i-refresh"/></svg></button><div class="top-avatar">IF</div></div>
+        <div class="topbar-actions"><span class="topbar-live"><span class="pulse-dot"></span><span id="topMode">GitHub workspace</span></span><span class="topbar-divider"></span><button type="button" class="icon-button" id="refreshBtn" title="새로고침" aria-label="새로고침"><svg class="icon"><use href="#i-refresh"/></svg></button><button type="button" class="icon-button" id="disconnectBtn" title="로그아웃" aria-label="로그아웃"><svg class="icon"><use href="#i-x"/></svg></button><div class="top-avatar">IF</div></div>
       </header>
 
       <div class="page-content">
         <section id="viewDashboard" class="view active">
           <div class="page-intro"><div><span class="eyebrow">OVERVIEW</span><h1>이슈 현황</h1><p>등록된 이슈의 처리 상태와 최근 활동을 확인합니다.</p></div><div class="page-date"><svg class="icon"><use href="#i-clock"/></svg><span id="todayDate">오늘</span></div></div>
 
-          <!-- 대시보드에서 자주 보는 이슈와 처리 현황 표시 -->
           <div class="focus-board">
             <div class="focus-main">
               <div class="focus-kicker"><span class="focus-kicker-dot"></span> QUICK START</div>
@@ -85,7 +220,7 @@
             <section class="panel issue-panel"><div class="panel-head"><div><h3>최근 이슈</h3><p>제목을 누르면 상세 내용을 볼 수 있습니다.</p></div><button type="button" class="text-button" data-go="issues">전체 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="table-wrap"><table class="issues-table"><thead><tr><th>이슈</th><th>유형</th><th>우선순위</th><th>상태</th><th></th></tr></thead><tbody id="recentIssues"><tr><td colspan="5" class="empty-cell">이슈를 불러오는 중입니다.</td></tr></tbody></table></div></section>
             <section class="panel activity-panel"><div class="panel-head"><div><h3>최근 활동</h3><p>GitHub에서 최근 업데이트된 이슈</p></div><svg class="icon panel-head-icon"><use href="#i-clock"/></svg></div><div class="activity-list" id="activityList"><p class="subtle-empty">아직 작업 내역이 없습니다.</p></div><div class="activity-foot">최근 수정된 열린 이슈를 기준으로 표시됩니다.</div></section>
           </div>
-          <div class="bottom-tip"><svg class="icon"><use href="#i-circle"/></svg><span>실제 GitHub 이슈를 조회합니다. 연결에 문제가 있다면 <strong>연동 설정</strong>에서 환경변수를 확인해 주세요.</span><button type="button" data-go="settings">설정 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+          <div class="bottom-tip"><svg class="icon"><use href="#i-circle"/></svg><span>실제 GitHub 이슈를 조회합니다. 연결에 문제가 있다면 <strong>연동 설정</strong>에서 연결 상태를 확인해 주세요.</span><button type="button" data-go="settings">설정 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
         </section>
 
         <section id="viewIssues" class="view">
@@ -107,8 +242,22 @@
         </section>
 
         <section id="viewSettings" class="view">
-          <div class="page-intro"><div><span class="eyebrow">INTEGRATIONS</span><h1>연동 설정</h1><p>API 키는 서버 환경변수로 관리하며 홈페이지에는 표시하지 않습니다.</p></div></div>
-          <div class="settings-layout"><section class="panel settings-panel"><div class="panel-head"><div><h3>서비스 연결 상태</h3><p>현재 서버 설정을 기준으로 표시합니다.</p></div></div><div class="integration-list" id="integrationRows"></div></section><section class="panel settings-panel"><div class="panel-head"><div><h3>GitHub 연결 순서</h3><p>처음에는 GitHub 쓰기 기능을 꺼두고 분석부터 확인해 보세요.</p></div></div><div class="guide-list"><div><span class="guide-index">01</span><div><strong>환경변수 설정</strong><p>.env에 GitHub 저장소와 토큰, OpenAI 키를 등록합니다.</p></div></div><div><span class="guide-index">02</span><div><strong>연동 확인</strong><p>GitHub 이슈가 보이는지 확인하고 GPT 분석을 실행해 봅니다.</p></div></div><div><span class="guide-index">03</span><div><strong>GitHub 결과 반영</strong><p>확인 후 ENABLE_GITHUB_WRITES=true로 바꿔 라벨과 댓글을 등록합니다.</p></div></div><div><span class="guide-index">04</span><div><strong>GitHub Actions</strong><p>저장소 Secret에 GPT 키를 추가하면 새 이슈 등록 시 자동 실행됩니다.</p></div></div></div></section></div>
+          <div class="page-intro"><div><span class="eyebrow">INTEGRATIONS</span><h1>연동 설정</h1><p>현재 연결된 GitHub 저장소와 서비스 상태를 확인합니다. API 키 원본은 표시하지 않습니다.</p></div></div>
+          <div class="settings-layout">
+            <section class="panel settings-panel">
+              <div class="panel-head"><div><h3>서비스 연결 상태</h3><p>현재 사용자 연결 설정을 기준으로 표시합니다.</p></div></div>
+              <div class="integration-list" id="integrationRows"></div>
+            </section>
+            <section class="panel settings-panel">
+              <div class="panel-head"><div><h3>GitHub 연결 안내</h3><p>GitHub App으로 저장소를 연결하고 AI 분석을 실행합니다.</p></div></div>
+              <div class="guide-list">
+                <div><span class="guide-index">01</span><div><strong>GitHub 로그인</strong><p>GitHub 계정으로 로그인하고 저장소 접근을 승인합니다.</p></div></div>
+                <div><span class="guide-index">02</span><div><strong>저장소 선택</strong><p>기존 저장소를 선택하거나 새 저장소를 생성합니다.</p></div></div>
+                <div><span class="guide-index">03</span><div><strong>AI 분석</strong><p>OpenAI API 키를 연결하고 이슈 분석을 실행합니다.</p></div></div>
+                <div><span class="guide-index">04</span><div><strong>자동화 설정</strong><p>GitHub Actions 자동 분석을 사용하려면 저장소별 추가 설정이 필요합니다.</p></div></div>
+              </div>
+            </section>
+          </div>
         </section>
       </div>
     </main>
@@ -122,7 +271,6 @@
   </aside>
 
   <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
-  <!-- 이 화면은 Flask API에서 데이터를 받아서 표시함 -->
   <script defer src="/app.js"></script>
 </body>
 </html>
