@@ -1,0 +1,8 @@
+.venv
+.git
+tests
+*.zip
+.env
+.env.*
+!.env.example
+RUN_WINDOWS.bat

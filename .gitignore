@@ -1,0 +1,13 @@
+# API 키와 로컬 환경은 Git에 올리지 않기
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vercel/
+*.sqlite3
+*.sqlite3-*
+*.log
+.DS_Store

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f4">
+  <meta name="description" content="IssueFlow — GitHub 이슈 분석 및 작업 자동화 콘솔">
+  <title>IssueFlow — 이슈 관리 워크스페이스</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- 아이콘은 따로 설치하지 않고 SVG로 넣어둠 -->
+  <svg aria-hidden="true" class="sprite" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 10-12h-7V2z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M10 2h4l.6 2.3 2 1.2 2.3-.7 2 3.5-1.7 1.7v2.3l1.7 1.7-2 3.5-2.3-.7-2 1.2L14 22h-4l-.6-2.3-2-1.2-2.3.7-2-3.5 1.7-1.7v-2.3L3.1 10l2-3.5 2.3.7 2-1.2L10 2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.5 1.3-4.5-2-6.3-2.4M14 22v-3.2c0-1.1.3-1.7.9-2.1 3.2-.4 6.3-1.8 6.3-7.1 0-1.5-.5-2.8-1.3-3.7.2-1 .2-2.6-.3-3.7 0 0-1.5-.4-4 1.9a13 13 0 0 0-7.2 0C6 1.9 4.5 2.3 4.5 2.3c-.5 1.1-.5 2.7-.3 3.7A5.6 5.6 0 0 0 2.9 10c0 5.3 3.1 6.7 6.3 7.1.6.4.9 1 .9 2.1V22"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M5 5 19 19M19 5 5 19"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 8a8 8 0 0 0-13.5-2.2L3 8m0-5v5h5M5 16a8 8 0 0 0 13.5 2.2L21 16m0 5v-5h-5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M13 5h6v6m0-6-9 9"/><path d="M19 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M3 6h2M3 12h2M3 18h2"/></symbol>
+  </svg>
+
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true"><span>if.</span></div>
+        <div class="brand-text"><strong>IssueFlow</strong><small>WORKSPACE</small></div>
+      </div>
+      <div class="nav-section-label">관리</div>
+      <nav class="nav" aria-label="주 메뉴">
+        <button type="button" class="nav-link active" data-nav="dashboard"><svg class="icon"><use href="#i-grid"/></svg><span>대시보드</span></button>
+        <button type="button" class="nav-link" data-nav="issues"><svg class="icon"><use href="#i-circle"/></svg><span>이슈 관리</span><span class="nav-count" id="navCount">0</span></button>
+        <button type="button" class="nav-link" data-nav="workflow"><svg class="icon"><use href="#i-zap"/></svg><span>자동화 흐름</span></button>
+        <button type="button" class="nav-link" data-nav="settings"><svg class="icon"><use href="#i-gear"/></svg><span>연동 설정</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-guide"><span class="sidebar-guide-number">GUIDE / 01</span><p>새 이슈 등록 후 분석 버튼을 누르면 전체 처리 흐름을 확인할 수 있어요.</p><button type="button" data-go="workflow">사용 방법 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+      <div class="sidebar-foot"><div class="avatar">IF</div><div><strong>내 워크스페이스</strong><small id="sidebarMode">실제 GitHub 연동</small></div><span class="connected-dot"></span></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-left"><button type="button" class="mobile-menu icon-button" id="mobileMenu" aria-label="메뉴 열기"><svg class="icon"><use href="#i-list"/></svg></button><span class="breadcrumb-parent">Workspace</span><span class="breadcrumb-slash">/</span><strong id="breadcrumbTitle">대시보드</strong></div>
+        <div class="topbar-actions"><span class="topbar-live"><span class="pulse-dot"></span><span id="topMode">GitHub workspace</span></span><span class="topbar-divider"></span><button type="button" class="icon-button" id="refreshBtn" title="새로고침" aria-label="새로고침"><svg class="icon"><use href="#i-refresh"/></svg></button><div class="top-avatar">IF</div></div>
+      </header>
+
+      <div class="page-content">
+        <section id="viewDashboard" class="view active">
+          <div class="page-intro"><div><span class="eyebrow">OVERVIEW</span><h1>이슈 현황</h1><p>등록된 이슈의 처리 상태와 최근 활동을 확인합니다.</p></div><div class="page-date"><svg class="icon"><use href="#i-clock"/></svg><span id="todayDate">오늘</span></div></div>
+
+          <!-- 대시보드에서 자주 보는 이슈와 처리 현황 표시 -->
+          <div class="focus-board">
+            <div class="focus-main">
+              <div class="focus-kicker"><span class="focus-kicker-dot"></span> QUICK START</div>
+              <h2>새로운 이슈부터<br>정리해 볼까요?</h2>
+              <p>이슈를 생성하거나 목록을 열어 유형과 우선순위를 확인하세요.</p>
+              <div class="focus-actions"><button type="button" class="btn btn-primary" id="heroCreate"><svg class="icon"><use href="#i-plus"/></svg> GitHub에 이슈 등록</button><button type="button" class="btn btn-quiet" data-go="issues">이슈 목록 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+            </div>
+            <div class="focus-aside" aria-label="분석 처리 과정">
+              <span class="focus-aside-title">처리 순서</span>
+              <div class="focus-line"><span>01</span><div><strong>이슈 수집</strong><small>GitHub API</small></div><svg class="icon"><use href="#i-check"/></svg></div>
+              <div class="focus-line"><span>02</span><div><strong>유형 및 우선순위 분석</strong><small>OpenAI GPT</small></div><svg class="icon"><use href="#i-check"/></svg></div>
+              <div class="focus-line"><span>03</span><div><strong>라벨·댓글·알림</strong><small>GitHub / Discord</small></div><svg class="icon"><use href="#i-arrow"/></svg></div>
+            </div>
+          </div>
+
+          <div class="section-caption"><strong>워크스페이스 요약</strong><span>현재 조회된 이슈 기준</span></div>
+          <div class="metrics-grid">
+            <article class="metric-card"><div class="metric-top"><span>전체 이슈</span><svg class="icon"><use href="#i-circle"/></svg></div><div class="metric-value" id="metricTotal">0</div><div class="metric-desc">등록된 이슈</div></article>
+            <article class="metric-card"><div class="metric-top"><span>분석 완료</span><svg class="icon"><use href="#i-check"/></svg></div><div class="metric-value" id="metricDone">0</div><div class="metric-desc"><span id="metricDonePct" class="chip positive">0% 완료</span></div></article>
+            <article class="metric-card"><div class="metric-top"><span>높은 우선순위</span><svg class="icon"><use href="#i-zap"/></svg></div><div class="metric-value" id="metricHigh">0</div><div class="metric-desc">확인이 필요한 이슈</div></article>
+            <article class="metric-card"><div class="metric-top"><span>분석 대기</span><svg class="icon"><use href="#i-clock"/></svg></div><div class="metric-value" id="metricPending">0</div><div class="metric-desc">아직 분류되지 않음</div></article>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel issue-panel"><div class="panel-head"><div><h3>최근 이슈</h3><p>제목을 누르면 상세 내용을 볼 수 있습니다.</p></div><button type="button" class="text-button" data-go="issues">전체 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="table-wrap"><table class="issues-table"><thead><tr><th>이슈</th><th>유형</th><th>우선순위</th><th>상태</th><th></th></tr></thead><tbody id="recentIssues"><tr><td colspan="5" class="empty-cell">이슈를 불러오는 중입니다.</td></tr></tbody></table></div></section>
+            <section class="panel activity-panel"><div class="panel-head"><div><h3>최근 활동</h3><p>GitHub에서 최근 업데이트된 이슈</p></div><svg class="icon panel-head-icon"><use href="#i-clock"/></svg></div><div class="activity-list" id="activityList"><p class="subtle-empty">아직 작업 내역이 없습니다.</p></div><div class="activity-foot">최근 수정된 열린 이슈를 기준으로 표시됩니다.</div></section>
+          </div>
+          <div class="bottom-tip"><svg class="icon"><use href="#i-circle"/></svg><span>실제 GitHub 이슈를 조회합니다. 연결에 문제가 있다면 <strong>연동 설정</strong>에서 환경변수를 확인해 주세요.</span><button type="button" data-go="settings">설정 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div>
+        </section>
+
+        <section id="viewIssues" class="view">
+          <div class="page-intro"><div><span class="eyebrow">ISSUES</span><h1>이슈 관리</h1><p>버그, 기능 요청, 문서 작업을 한 곳에서 살펴봅니다.</p></div><button type="button" class="btn btn-primary" id="newIssueBtn"><svg class="icon"><use href="#i-plus"/></svg> 새 이슈 등록</button></div>
+          <section class="panel all-issues-panel"><div class="list-head"><div><h3>전체 이슈 <span class="inline-count" id="issueCount">0</span></h3><p>이슈를 선택하면 분석 결과와 상세 내용을 확인할 수 있어요.</p></div><div class="list-controls"><label class="search-input"><svg class="icon"><use href="#i-search"/></svg><input id="issueSearch" type="search" placeholder="제목 또는 번호 검색" autocomplete="off" aria-label="이슈 검색"></label><select id="issueFilter" aria-label="이슈 필터"><option value="all">전체</option><option value="pending">분석 대기</option><option value="processed">분석 완료</option><option value="high">우선순위 높음</option></select></div></div><div class="table-wrap"><table class="issues-table full-table"><thead><tr><th>이슈 정보</th><th>분류</th><th>우선순위</th><th>처리 상태</th><th>등록일</th><th></th></tr></thead><tbody id="allIssues"></tbody></table></div><div class="list-footer"><span id="listSummary">0개 이슈 표시</span><button type="button" class="btn btn-outline btn-sm" id="issuesRefresh"><svg class="icon"><use href="#i-refresh"/></svg> 새로고침</button></div></section>
+        </section>
+
+        <section id="viewWorkflow" class="view">
+          <div class="page-intro"><div><span class="eyebrow">AUTOMATION</span><h1>자동화 흐름</h1><p>새 이슈가 등록된 뒤 어떤 작업이 실행되는지 정리했습니다.</p></div></div>
+          <div class="workflow-intro"><span class="small-overline">HOW IT WORKS</span><h2>이슈 등록부터 알림까지,<br>다섯 단계로 이어집니다.</h2><p>GitHub Actions에서 Python 프로그램을 실행하고, 분석 결과를 다시 이슈에 반영합니다.</p></div>
+          <div class="steps-grid">
+            <article class="step-card"><span class="step-num">01</span><div class="step-icon"><svg class="icon"><use href="#i-github"/></svg></div><div><h3>새 이슈 등록</h3><p>GitHub Issues에 버그, 기능 요청 등이 등록됩니다.</p><small class="step-tech">GitHub Issues</small></div></article>
+            <article class="step-card"><span class="step-num">02</span><div class="step-icon"><svg class="icon"><use href="#i-zap"/></svg></div><div><h3>워크플로우 실행</h3><p>등록 이벤트를 받아 Python 프로그램을 실행합니다.</p><small class="step-tech">GitHub Actions</small></div></article>
+            <article class="step-card"><span class="step-num">03</span><div class="step-icon"><svg class="icon"><use href="#i-spark"/></svg></div><div><h3>이슈 분석</h3><p>유형, 우선순위, 확인할 항목을 정리합니다.</p><small class="step-tech">OpenAI GPT / LangChain</small></div></article>
+            <article class="step-card"><span class="step-num">04</span><div class="step-icon"><svg class="icon"><use href="#i-check"/></svg></div><div><h3>GitHub 반영</h3><p>허용된 라벨을 붙이고 분석 댓글을 작성합니다.</p><small class="step-tech">GitHub REST API</small></div></article>
+            <article class="step-card"><span class="step-num">05</span><div class="step-icon"><svg class="icon"><use href="#i-bell"/></svg></div><div><h3>알림 전송</h3><p>원하는 경우 분석 결과를 Discord로 보냅니다.</p><small class="step-tech">Discord Webhook</small></div></article>
+          </div>
+          <div class="workflow-note"><svg class="icon"><use href="#i-circle"/></svg><div><strong>실제 코드 수정은 하지 않습니다.</strong><p>이 에이전트는 분류와 점검 방법을 제안합니다. 이슈 본문에 있는 명령은 실행하지 않으며, GitHub에 적용할 라벨도 미리 정한 목록으로 제한합니다.</p></div></div>
+        </section>
+
+        <section id="viewSettings" class="view">
+          <div class="page-intro"><div><span class="eyebrow">INTEGRATIONS</span><h1>연동 설정</h1><p>API 키는 서버 환경변수로 관리하며 홈페이지에는 표시하지 않습니다.</p></div></div>
+          <div class="settings-layout"><section class="panel settings-panel"><div class="panel-head"><div><h3>서비스 연결 상태</h3><p>현재 서버 설정을 기준으로 표시합니다.</p></div></div><div class="integration-list" id="integrationRows"></div></section><section class="panel settings-panel"><div class="panel-head"><div><h3>GitHub 연결 순서</h3><p>처음에는 GitHub 쓰기 기능을 꺼두고 분석부터 확인해 보세요.</p></div></div><div class="guide-list"><div><span class="guide-index">01</span><div><strong>환경변수 설정</strong><p>.env에 GitHub 저장소와 토큰, OpenAI 키를 등록합니다.</p></div></div><div><span class="guide-index">02</span><div><strong>연동 확인</strong><p>GitHub 이슈가 보이는지 확인하고 GPT 분석을 실행해 봅니다.</p></div></div><div><span class="guide-index">03</span><div><strong>GitHub 결과 반영</strong><p>확인 후 ENABLE_GITHUB_WRITES=true로 바꿔 라벨과 댓글을 등록합니다.</p></div></div><div><span class="guide-index">04</span><div><strong>GitHub Actions</strong><p>저장소 Secret에 GPT 키를 추가하면 새 이슈 등록 시 자동 실행됩니다.</p></div></div></div></section></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="overlay" id="drawerOverlay" hidden></div>
+  <aside class="detail-drawer" id="detailDrawer" aria-label="이슈 상세" aria-hidden="true">
+    <div class="drawer-head"><div><span class="drawer-eyebrow">ISSUE DETAIL</span><h2>이슈 상세</h2></div><button type="button" class="icon-button" id="closeDrawer" aria-label="닫기"><svg class="icon"><use href="#i-x"/></svg></button></div>
+    <div class="drawer-content" id="drawerContent"><p class="subtle-empty">이슈를 선택해 주세요.</p></div>
+    <div class="drawer-footer"><button type="button" class="btn btn-outline" id="drawerGithub" hidden><svg class="icon"><use href="#i-external"/></svg> GitHub에서 보기</button><button type="button" class="btn btn-primary" id="analyzeBtn"><svg class="icon"><use href="#i-spark"/></svg><span id="analyzeLabel">이슈 분석 실행</span></button></div>
+  </aside>
+
+  <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
+  <!-- 이 화면은 Flask API에서 데이터를 받아서 표시함 -->
+  <script defer src="/app.js"></script>
+</body>
+</html>
