@@ -5,11 +5,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f6f4">
-  <meta name="description" content="IssueFlow — GitHub 이슈 분석 및 작업 자동화 콘솔">
-  <title>IssueFlow — 이슈 관리 워크스페이스</title>
+  <meta name="description" content="IssueFlow AI — GitHub 이슈 분석 및 작업 자동화 플랫폼">
+  <title>IssueFlow AI — 이슈 관리 워크스페이스</title>
   <link rel="stylesheet" href="/styles.css">
   <style>
-    /* GitHub 로그인 및 저장소 연결 화면 */
+    /* 시작 화면과 저장소 연결 화면 */
     .setup-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:#f5f6f4;overflow-y:auto}
     .setup-screen[hidden],.setup-step[hidden],.setup-panel[hidden]{display:none!important}
     .setup-card{width:100%;max-width:480px;padding:36px;box-sizing:border-box;background:#fff;border:1px solid #e6e9e5;border-radius:18px;box-shadow:0 16px 50px rgba(20,30,25,.06)}
@@ -27,8 +27,6 @@
     .setup-btn.secondary{background:#f2f5f2;color:#34433a;border:1px solid #e1e7e1}
     .setup-btn.secondary:hover{background:#e9efea}
     .setup-btn svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8}
-    .setup-divider{display:flex;align-items:center;gap:12px;margin:22px 0;color:#9aa49d;font-size:12px}
-    .setup-divider:before,.setup-divider:after{content:"";flex:1;height:1px;background:#e6eae6}
     .setup-note{margin:16px 0 0;font-size:12px;line-height:1.7;color:#89938c;text-align:center}
     .setup-error{margin:12px 0 0;color:#b42318;font-size:13px;line-height:1.6}
     .setup-user{display:flex;align-items:center;gap:12px;padding:12px;background:#f6f8f6;border-radius:10px}
@@ -44,25 +42,62 @@
     .setup-tab{padding:12px 8px;border:1px solid #e0e6e0;border-radius:9px;background:#fff;color:#69766e;font-weight:600;cursor:pointer}
     .setup-tab.active{border-color:#287b55;background:#edf7f0;color:#287b55}
     .setup-hint{font-size:12px;line-height:1.6;color:#839087}
-    @media(max-width:520px){.setup-card{padding:26px 22px}}
+
+    /* IssueFlow AI 첫 시작 화면 */
+    .setup-screen:has(#setupLogin:not([hidden])){background:radial-gradient(circle at 15% 15%,#e3f1e7 0,transparent 35%),radial-gradient(circle at 85% 85%,#e9eee6 0,transparent 35%),#f5f6f4}
+    .setup-card:has(#setupLogin:not([hidden])){max-width:510px;padding:44px 40px}
+    .setup-card:has(#setupLogin:not([hidden])) .setup-brand{margin-bottom:32px}
+    .welcome-label{display:inline-flex;align-items:center;gap:7px;margin-bottom:15px;padding:7px 12px;border-radius:20px;background:#edf7f0;color:#287b55;font-size:11px;font-weight:700;letter-spacing:.5px}
+    .welcome-label:before{content:"";width:7px;height:7px;border-radius:50%;background:#3a9b6c}
+    .welcome-title{font-size:32px!important;line-height:1.3!important;letter-spacing:-1.2px}
+    .welcome-title span{color:#287b55}
+    .welcome-description{font-size:14px;line-height:1.85;color:#75827a;margin:16px 0 24px}
+    .welcome-features{display:grid;gap:10px;margin:0 0 27px}
+    .welcome-feature{display:flex;align-items:center;gap:12px;padding:13px 15px;background:#f7f9f7;border:1px solid #edf0ed;border-radius:10px}
+    .welcome-feature-icon{display:flex;align-items:center;justify-content:center;flex:none;width:34px;height:34px;border-radius:9px;background:#e5f2e9;color:#287b55}
+    .welcome-feature-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .welcome-feature strong{display:block;font-size:13px;color:#2b3930}
+    .welcome-feature small{display:block;margin-top:3px;font-size:11px;color:#849087;line-height:1.5}
+    .welcome-start{margin-top:0;font-size:15px;padding:16px}
+    .welcome-start svg{width:17px;height:17px}
+    .welcome-footer{margin-top:22px;padding-top:18px;border-top:1px solid #eef1ed;text-align:center;color:#9aa49d;font-size:11px}
+    @media(max-width:520px){.setup-card{padding:26px 22px}.setup-card:has(#setupLogin:not([hidden])){padding:34px 24px}.welcome-title{font-size:28px!important}}
   </style>
 </head>
 <body>
 
-  <!-- GitHub 로그인 및 워크스페이스 설정 -->
+  <!-- GitHub 인증 및 워크스페이스 설정 -->
   <div id="setupScreen" class="setup-screen">
     <div class="setup-card">
       <div class="setup-brand">if. <span>IssueFlow AI</span></div>
 
-      <!-- 1단계: GitHub 로그인 -->
+      <!-- 1단계: IssueFlow AI 시작 화면 -->
       <section id="setupLogin" class="setup-step">
-        <h1>GitHub로 시작하기</h1>
-        <p class="setup-description">GitHub 계정을 연결하고 이슈 관리 워크스페이스를 시작하세요. 별도의 GitHub 토큰 입력은 필요하지 않습니다.</p>
-        <a id="githubLoginBtn" class="setup-btn" href="/auth/github">
-          <svg viewBox="0 0 24 24"><path d="M9 19c-4.5 1.3-4.5-2-6.3-2.4M14 22v-3.2c0-1.1.3-1.7.9-2.1 3.2-.4 6.3-1.8 6.3-7.1 0-1.5-.5-2.8-1.3-3.7 0 0-1.5-.4-4 1.9a13 13 0 0 0-7.2 0C6 1.9 4.5 2.3 4.5 2.3c-.5 1.1-.5 2.7-.3 3.7A5.6 5.6 0 0 0 2.9 10c0 5.3 3.1 6.7 6.3 7.1.6.4.9 1 .9 2.1V22"/></svg>
-          GitHub로 계속하기
+        <div class="welcome-label">AI-POWERED ISSUE MANAGEMENT</div>
+        <h1 class="welcome-title">GitHub 이슈 관리,<br><span>IssueFlow AI</span>로 시작하세요.</h1>
+        <p class="welcome-description">반복되는 이슈 분류와 우선순위 판단을 AI로 간편하게 처리하세요. GitHub 저장소를 연결하면 이슈 현황부터 분석 결과까지 한곳에서 관리할 수 있습니다.</p>
+
+        <div class="welcome-features">
+          <div class="welcome-feature">
+            <span class="welcome-feature-icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/><path d="m17 16 2 2 3-4"/></svg></span>
+            <div><strong>GitHub 이슈 통합 관리</strong><small>저장소의 이슈 현황과 처리 상태를 한눈에 확인</small></div>
+          </div>
+          <div class="welcome-feature">
+            <span class="welcome-feature-icon"><svg viewBox="0 0 24 24"><path d="m12 2 2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z"/></svg></span>
+            <div><strong>AI 기반 이슈 분석</strong><small>이슈 유형과 우선순위, 예상 원인 및 점검 방법 제안</small></div>
+          </div>
+          <div class="welcome-feature">
+            <span class="welcome-feature-icon"><svg viewBox="0 0 24 24"><path d="M4 12h5l3-7 4 14 3-7h2"/><circle cx="19" cy="5" r="2"/></svg></span>
+            <div><strong>자동화 및 알림 연동</strong><small>GitHub Actions와 Discord를 활용한 작업 흐름</small></div>
+          </div>
+        </div>
+
+        <a id="githubLoginBtn" class="setup-btn welcome-start" href="/auth/github">
+          시작하기
+          <svg viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
-        <p class="setup-note">GitHub App 인증을 사용하며 승인한 저장소에만 접근합니다.</p>
+        <p class="setup-note">시작하기를 누르면 GitHub 공식 인증 페이지로 이동합니다.<br>GitHub 계정으로 로그인하거나 지원되는 Google·Apple 로그인을 이용할 수 있습니다.</p>
+        <div class="welcome-footer">GitHub App 인증 · 별도의 GitHub 토큰 입력 불필요</div>
       </section>
 
       <!-- 2단계: 저장소 선택 또는 생성 -->
@@ -108,7 +143,6 @@
             </select>
 
             <p class="setup-hint">README 파일을 포함한 저장소를 생성합니다. 생성 후 GitHub App에 저장소 접근 권한을 승인해야 할 수 있습니다.</p>
-
             <button id="createRepoSubmit" class="setup-btn" type="submit">새 저장소 생성하기</button>
           </form>
         </div>
@@ -145,7 +179,7 @@
     </div>
   </div>
 
-  <!-- 기존 대시보드 SVG 아이콘 -->
+  <!-- 대시보드 SVG 아이콘 -->
   <svg aria-hidden="true" class="sprite" xmlns="http://www.w3.org/2000/svg">
     <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
     <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></symbol>

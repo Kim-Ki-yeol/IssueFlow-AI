@@ -5,27 +5,19 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 
 const state = {
-  config: null,
-  issues: [],
-  activity: [],
-  selected: null,
-  busy: false,
-  view: 'dashboard',
-  repositories: [],
-  selectedRepo: '',
-  openaiKey: '',
-  discordWebhook: '',
+  config: null, issues: [], activity: [], selected: null,
+  busy: false, view: 'dashboard', repositories: [],
+  selectedRepo: '', openaiKey: '', discordWebhook: '',
   connected: false
 };
 
 let connectionId = 0;
+let loggingOut = false;
+let authCheckId = 0;
 
 const icons = {
-  check: 'i-check',
-  spark: 'i-spark',
-  circle: 'i-circle',
-  github: 'i-github',
-  bell: 'i-bell'
+  check: 'i-check', spark: 'i-spark', circle: 'i-circle',
+  github: 'i-github', bell: 'i-bell'
 };
 
 function icon(name, cls = 'icon') {
@@ -33,35 +25,25 @@ function icon(name, cls = 'icon') {
 }
 
 function escapeHtml(value) {
-  return String(value ?? '').replace(
-    /[&<>"']/g,
-    c => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }[c])
-  );
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;',
+    '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
 function safeGithubUrl(value) {
   const url = String(value || '');
   return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(issues|pull)\/\d+$/.test(url)
-    ? url
-    : null;
+    ? url : null;
 }
 
 function formatDate(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-
   return new Intl.DateTimeFormat('ko-KR', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
   }).format(date);
 }
 
@@ -69,30 +51,23 @@ function miniDate(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-
   return new Intl.DateTimeFormat('ko-KR', {
-    month: 'short',
-    day: 'numeric'
+    month: 'short', day: 'numeric'
   }).format(date);
 }
 
 function category(issue) {
   const labels = issue.labels || [];
-
   if (labels.includes('bug')) return 'bug';
   if (labels.includes('enhancement')) return 'feature';
   if (labels.includes('documentation')) return 'documentation';
   if (labels.includes('question')) return 'question';
-
   return issue.analysis?.category || 'unclassified';
 }
 
 function priority(issue) {
   const label = (issue.labels || []).find(v => v.startsWith('priority:'));
-  const value = label
-    ? label.split(':')[1]
-    : issue.analysis?.priority || 'none';
-
+  const value = label ? label.split(':')[1] : issue.analysis?.priority || 'none';
   return ['high', 'medium', 'low'].includes(value) ? value : 'none';
 }
 
@@ -101,18 +76,12 @@ function processed(issue) {
 }
 
 const categoryLabel = {
-  bug: 'Bug',
-  feature: 'Feature',
-  documentation: 'Docs',
-  question: 'Question',
-  unclassified: '미분류'
+  bug: 'Bug', feature: 'Feature', documentation: 'Docs',
+  question: 'Question', unclassified: '미분류'
 };
 
 const priorityLabel = {
-  high: '높음',
-  medium: '보통',
-  low: '낮음',
-  none: '미정'
+  high: '높음', medium: '보통', low: '낮음', none: '미정'
 };
 
 // Flask API 호출
@@ -122,18 +91,12 @@ async function api(path, options = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const headers = {
-      ...(requestOptions.headers || {})
-    };
+    const headers = { ...(requestOptions.headers || {}) };
 
-    // 로그인 토큰은 서버 세션에서 처리
-    // OpenAI 키와 Discord 설정은 브라우저 메모리에서 전달
-    if (state.openaiKey) {
-      headers['X-IssueFlow-OpenAI-Key'] = state.openaiKey;
-    }
-
-    if (state.discordWebhook) {
-      headers['X-IssueFlow-Discord-Webhook'] = state.discordWebhook;
+    // 인증 정보는 로그인 및 로그아웃 요청에 포함하지 않음
+    if (!path.startsWith('/api/auth/')) {
+      if (state.openaiKey) headers['X-IssueFlow-OpenAI-Key'] = state.openaiKey;
+      if (state.discordWebhook) headers['X-IssueFlow-Discord-Webhook'] = state.discordWebhook;
     }
 
     if (requestOptions.body !== undefined) {
@@ -141,19 +104,12 @@ async function api(path, options = {}) {
     }
 
     const response = await fetch(path, {
-      ...requestOptions,
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'same-origin'
+      ...requestOptions, headers, signal: controller.signal,
+      cache: 'no-store', credentials: 'same-origin'
     });
 
     const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -168,11 +124,9 @@ async function api(path, options = {}) {
 function toast(message, type = 'success') {
   const parent = $('#toastContainer');
   if (!parent) return;
-
   const item = document.createElement('div');
   item.className = `toast ${type}`;
   item.textContent = message;
-
   parent.appendChild(item);
   setTimeout(() => item.remove(), 4500);
 }
@@ -183,37 +137,90 @@ function showSetupStep(step) {
     const element = $(`#${id}`);
     if (element) element.hidden = id !== step;
   });
-
   $('#setupScreen').hidden = false;
 }
 
 function showRepositoryTab(type) {
   const selecting = type === 'select';
-
   $('#selectRepoPanel').hidden = !selecting;
   $('#createRepoPanel').hidden = selecting;
-
   $('#selectRepoTab').classList.toggle('active', selecting);
   $('#createRepoTab').classList.toggle('active', !selecting);
-
   $('#repoSetupError').textContent = '';
 }
 
+function clearGithubUser() {
+  const username = $('#setupUsername');
+  const avatar = $('#setupAvatar');
+  const repoName = $('#selectedRepoName');
+  if (username) username.textContent = '';
+  if (avatar) {
+    avatar.removeAttribute('src');
+    avatar.hidden = true;
+  }
+  if (repoName) repoName.textContent = '';
+}
+
+// 로그아웃 후 화면과 데이터 초기화
+function resetWorkspace() {
+  connectionId++;
+  authCheckId++;
+
+  Object.assign(state, {
+    config: null, issues: [], activity: [], selected: null,
+    busy: false, view: 'dashboard', repositories: [],
+    selectedRepo: '', openaiKey: '', discordWebhook: '',
+    connected: false
+  });
+
+  clearGithubUser();
+  $('#setupForm').reset();
+  $('#setupError').textContent = '';
+  $('#repoSetupError').textContent = '';
+  $('#setupRepoSearch').value = '';
+  $('#issueSearch').value = '';
+  $('#issueFilter').value = 'all';
+
+  closeDrawer();
+  renderIssues();
+  renderActivity();
+
+  $('#integrationRows').replaceChildren();
+  $('#sidebarMode').textContent = 'GitHub 연결 대기';
+  $('#topMode').textContent = '연결 대기';
+
+  showSetupStep('setupLogin');
+  selectView('dashboard');
+}
+
+// 로그인 상태 확인
 async function checkLogin() {
+  if (loggingOut) return;
+
+  const id = ++authCheckId;
+  const connection = connectionId;
   const result = await api('/api/auth/me');
 
+  // 오래된 인증 확인 결과는 화면에 적용하지 않음
+  if (loggingOut || id !== authCheckId || connection !== connectionId) return;
+
   if (!result.authenticated) {
+    state.selectedRepo = '';
+    state.repositories = [];
+    clearGithubUser();
     showSetupStep('setupLogin');
     return;
   }
 
   const user = result.user || {};
-
   $('#setupUsername').textContent = user.login || 'GitHub 사용자';
 
   if (user.avatar_url) {
     $('#setupAvatar').src = user.avatar_url;
     $('#setupAvatar').hidden = false;
+  } else {
+    $('#setupAvatar').removeAttribute('src');
+    $('#setupAvatar').hidden = true;
   }
 
   if (result.selected_repo) {
@@ -223,13 +230,18 @@ async function checkLogin() {
     return;
   }
 
+  state.selectedRepo = '';
+  $('#selectedRepoName').textContent = '';
   showSetupStep('setupRepository');
   await loadRepositories();
 }
 
 // GitHub App 설치된 저장소 조회
 async function loadRepositories() {
+  if (loggingOut) return;
+
   const list = $('#setupRepoList');
+  const id = connectionId;
   list.textContent = '저장소 목록을 불러오는 중입니다.';
 
   try {
@@ -237,21 +249,22 @@ async function loadRepositories() {
     const all = [];
 
     for (const installation of installations.items || []) {
+      if (loggingOut || id !== connectionId) return;
+
       const result = await api(
         `/api/github/installations/${installation.id}/repositories`
       );
 
       for (const repo of result.items || []) {
-        all.push({
-          ...repo,
-          installation_id: installation.id
-        });
+        all.push({ ...repo, installation_id: installation.id });
       }
     }
 
+    if (loggingOut || id !== connectionId) return;
     state.repositories = all;
     renderRepositoryList();
   } catch (error) {
+    if (loggingOut || id !== connectionId) return;
     list.textContent = '저장소를 불러오지 못했습니다.';
     $('#repoSetupError').textContent = error.message;
   }
@@ -260,7 +273,6 @@ async function loadRepositories() {
 function renderRepositoryList() {
   const list = $('#setupRepoList');
   const search = $('#setupRepoSearch').value.trim().toLowerCase();
-
   const repositories = state.repositories.filter(repo =>
     repo.full_name.toLowerCase().includes(search)
   );
@@ -273,7 +285,6 @@ function renderRepositoryList() {
     empty.textContent = state.repositories.length
       ? '검색 결과가 없습니다.'
       : '연결 가능한 저장소가 없습니다. GitHub App 설치를 확인해 주세요.';
-
     list.appendChild(empty);
     return;
   }
@@ -292,14 +303,16 @@ function renderRepositoryList() {
 
     content.append(name, description);
     button.appendChild(content);
-
     button.addEventListener('click', () => selectRepository(repo));
     list.appendChild(button);
   }
 }
 
 async function selectRepository(repo) {
+  if (loggingOut) return;
+
   const error = $('#repoSetupError');
+  const id = connectionId;
   error.textContent = '';
 
   try {
@@ -311,25 +324,27 @@ async function selectRepository(repo) {
       })
     });
 
+    if (loggingOut || id !== connectionId) return;
+
     state.selectedRepo = repo.full_name;
     $('#selectedRepoName').textContent = repo.full_name;
-
     showSetupStep('setupCredentials');
   } catch (err) {
-    error.textContent = err.message;
+    if (!loggingOut && id === connectionId) error.textContent = err.message;
   }
 }
 
 // 새 GitHub 저장소 생성
 async function createRepository(event) {
   event.preventDefault();
+  if (loggingOut) return;
 
   const button = $('#createRepoSubmit');
   const error = $('#repoSetupError');
-
   const name = $('#newRepoName').value.trim();
   const description = $('#newRepoDescription').value.trim();
   const isPrivate = $('#newRepoVisibility').value === 'private';
+  const id = connectionId;
 
   error.textContent = '';
 
@@ -342,9 +357,7 @@ async function createRepository(event) {
 
   if (!window.confirm(
     `${name} 저장소를 ${visibility}로 생성할까요?\n실제 GitHub 계정에 저장소가 생성됩니다.`
-  )) {
-    return;
-  }
+  )) return;
 
   button.disabled = true;
   button.textContent = '저장소 생성 중...';
@@ -352,22 +365,19 @@ async function createRepository(event) {
   try {
     const result = await api('/api/github/repositories', {
       method: 'POST',
-      body: JSON.stringify({
-        name,
-        description,
-        private: isPrivate
-      }),
+      body: JSON.stringify({ name, description, private: isPrivate }),
       timeoutMs: 45000
     });
 
-    toast(`${result.repo} 저장소가 생성되었습니다.`);
+    if (loggingOut || id !== connectionId) return;
 
+    toast(`${result.repo} 저장소가 생성되었습니다.`);
     showRepositoryTab('select');
     await loadRepositories();
 
-    const created = state.repositories.find(
-      repo => repo.full_name === result.repo
-    );
+    if (loggingOut || id !== connectionId) return;
+
+    const created = state.repositories.find(repo => repo.full_name === result.repo);
 
     if (created) {
       await selectRepository(created);
@@ -381,13 +391,12 @@ async function createRepository(event) {
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         link.textContent = '생성한 저장소 보기';
-
         error.appendChild(document.createElement('br'));
         error.appendChild(link);
       }
     }
   } catch (err) {
-    error.textContent = err.message;
+    if (!loggingOut && id === connectionId) error.textContent = err.message;
   } finally {
     button.disabled = false;
     button.textContent = '새 저장소 생성하기';
@@ -397,14 +406,15 @@ async function createRepository(event) {
 // OpenAI 연결
 async function connectWorkspace(event) {
   event.preventDefault();
+  if (loggingOut) return;
 
   const button = $('#setupSubmit');
   const error = $('#setupError');
-
-  error.textContent = '';
-
   const key = $('#setupOpenaiKey').value.trim();
   const discord = $('#setupDiscord').value.trim();
+  const id = connectionId;
+
+  error.textContent = '';
 
   if (!key) {
     error.textContent = 'OpenAI API 키를 입력해 주세요.';
@@ -413,7 +423,6 @@ async function connectWorkspace(event) {
 
   button.disabled = true;
   button.textContent = '연결 확인 중...';
-
   state.openaiKey = key;
   state.discordWebhook = discord;
 
@@ -422,6 +431,8 @@ async function connectWorkspace(event) {
       api('/api/config'),
       api('/api/issues')
     ]);
+
+    if (loggingOut || id !== connectionId) return;
 
     state.config = config;
     state.issues = issues.items || [];
@@ -432,16 +443,19 @@ async function connectWorkspace(event) {
 
     $('#setupForm').reset();
     $('#setupScreen').hidden = true;
-
     selectView('dashboard');
-    await refresh(true);
 
-    toast(`${config.repo} 저장소에 연결되었습니다.`);
+    await refresh(true);
+    if (!loggingOut && id === connectionId) {
+      toast(`${config.repo} 저장소에 연결되었습니다.`);
+    }
   } catch (err) {
-    state.openaiKey = '';
-    state.discordWebhook = '';
-    state.connected = false;
-    error.textContent = err.message;
+    if (!loggingOut && id === connectionId) {
+      state.openaiKey = '';
+      state.discordWebhook = '';
+      state.connected = false;
+      error.textContent = err.message;
+    }
   } finally {
     button.disabled = false;
     button.textContent = '워크스페이스 시작하기';
@@ -450,9 +464,15 @@ async function connectWorkspace(event) {
 
 // GitHub 로그아웃
 async function disconnectWorkspace() {
-  if (!window.confirm('GitHub 연결을 해제하고 로그아웃할까요?')) {
-    return;
-  }
+  if (loggingOut) return;
+  if (!window.confirm('IssueFlow AI에서 로그아웃할까요?')) return;
+
+  loggingOut = true;
+  connectionId++;
+  authCheckId++;
+
+  const button = $('#disconnectBtn');
+  if (button) button.disabled = true;
 
   try {
     await api('/api/auth/logout', {
@@ -460,45 +480,28 @@ async function disconnectWorkspace() {
       body: JSON.stringify({})
     });
 
-    connectionId++;
+    const auth = await api('/api/auth/me');
 
-    state.config = null;
-    state.issues = [];
-    state.activity = [];
-    state.selected = null;
-    state.selectedRepo = '';
-    state.openaiKey = '';
-    state.discordWebhook = '';
-    state.connected = false;
-    state.repositories = [];
+    if (auth.authenticated) {
+      throw new Error('로그아웃 후에도 로그인 상태입니다. 서버 세션을 확인해 주세요.');
+    }
 
-    closeDrawer();
-    renderIssues();
-    renderActivity();
-
-    $('#integrationRows').replaceChildren();
-    $('#sidebarMode').textContent = 'GitHub 연결 대기';
-    $('#topMode').textContent = '연결 대기';
-
-    $('#setupForm').reset();
-    $('#setupError').textContent = '';
-
-    showSetupStep('setupLogin');
-    selectView('dashboard');
+    resetWorkspace();
+    toast('IssueFlow AI에서 로그아웃되었습니다.');
   } catch (err) {
     toast(err.message, 'error');
+  } finally {
+    loggingOut = false;
+    if (button) button.disabled = false;
   }
 }
 
 // 대시보드 화면 이동
 function selectView(name) {
   const views = {
-    dashboard: '대시보드',
-    issues: '이슈 관리',
-    workflow: '자동화 워크플로우',
-    settings: '연동 설정'
+    dashboard: '대시보드', issues: '이슈 관리',
+    workflow: '자동화 워크플로우', settings: '연동 설정'
   };
-
   if (!(name in views)) return;
 
   state.view = name;
@@ -553,7 +556,6 @@ function renderMetrics() {
   $('#metricDone').textContent = done;
   $('#metricHigh').textContent = high;
   $('#metricPending').textContent = total - done;
-
   $('#metricDonePct').textContent =
     `${total ? Math.round(done / total * 100) : 0}% 완료`;
 
@@ -565,7 +567,6 @@ function renderIssues() {
   renderMetrics();
 
   const recent = state.issues.slice(0, 5);
-
   $('#recentIssues').innerHTML = recent.length
     ? recent.map(issue => issueRow(issue)).join('')
     : '<tr><td colspan="5" class="empty-cell">표시할 이슈가 없습니다.</td></tr>';
@@ -574,13 +575,11 @@ function renderIssues() {
   const filter = $('#issueFilter').value;
 
   const visible = state.issues.filter(issue => {
-    const matchesSearch =
-      !query ||
+    const matchesSearch = !query ||
       String(issue.title || '').toLowerCase().includes(query) ||
       String(issue.number).includes(query);
 
-    const matchesFilter =
-      filter === 'all' ||
+    const matchesFilter = filter === 'all' ||
       (filter === 'pending' && !processed(issue)) ||
       (filter === 'processed' && processed(issue)) ||
       (filter === 'high' && priority(issue) === 'high');
@@ -597,9 +596,7 @@ function renderIssues() {
 
   $$('.issue-row').forEach(row => {
     const number = Number(row.dataset.issue);
-
     row.addEventListener('click', () => openDrawer(number));
-
     row.addEventListener('keydown', event => {
       if (event.key === 'Enter') openDrawer(number);
     });
@@ -652,51 +649,32 @@ function renderConfig() {
   $('#topMode').textContent = 'GitHub workspace';
 
   $('#integrationRows').innerHTML = [
-    integration(
-      'github',
-      'GitHub REST API',
-      config.repo || '저장소 미설정',
-      config.github_enabled,
-      config.github_enabled ? '설정됨' : '설정 필요'
-    ),
-    integration(
-      'spark',
-      'OpenAI GPT API',
-      `모델: ${config.model}`,
-      config.ai_enabled,
-      config.ai_enabled ? '설정됨' : '설정 필요'
-    ),
-    integration(
-      'bell',
-      'Discord Webhook',
-      '이슈 분석 알림 (선택)',
-      config.discord_enabled,
-      config.discord_enabled ? '설정됨' : '미설정'
-    ),
-    integration(
-      'check',
-      'GitHub 쓰기 권한',
-      '라벨 및 분석 댓글 등록',
-      config.writes_enabled,
-      config.writes_enabled ? '활성화' : '읽기 전용'
-    )
+    integration('github', 'GitHub REST API',
+      config.repo || '저장소 미설정', config.github_enabled,
+      config.github_enabled ? '설정됨' : '설정 필요'),
+    integration('spark', 'OpenAI GPT API',
+      `모델: ${config.model}`, config.ai_enabled,
+      config.ai_enabled ? '설정됨' : '설정 필요'),
+    integration('bell', 'Discord Webhook',
+      '이슈 분석 알림 (선택)', config.discord_enabled,
+      config.discord_enabled ? '설정됨' : '미설정'),
+    integration('check', 'GitHub 쓰기 권한',
+      '라벨 및 분석 댓글 등록', config.writes_enabled,
+      config.writes_enabled ? '활성화' : '읽기 전용')
   ].join('');
 }
 
 // 최신 데이터 조회
 async function refresh(silent = false) {
-  if (!state.connected) return;
-
+  if (!state.connected || loggingOut) return;
   const id = connectionId;
 
   try {
     const [config, issues, activity] = await Promise.all([
-      api('/api/config'),
-      api('/api/issues'),
-      api('/api/activity')
+      api('/api/config'), api('/api/issues'), api('/api/activity')
     ]);
 
-    if (id !== connectionId) return;
+    if (loggingOut || id !== connectionId) return;
 
     state.config = config;
     state.issues = issues.items || [];
@@ -708,7 +686,7 @@ async function refresh(silent = false) {
 
     if (!silent) toast('최신 정보를 불러왔습니다.');
   } catch (err) {
-    if (id === connectionId) toast(err.message, 'error');
+    if (!loggingOut && id === connectionId) toast(err.message, 'error');
   }
 }
 
@@ -719,8 +697,7 @@ function openGithubNewIssue() {
   if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
     window.open(
       `https://github.com/${repo}/issues/new`,
-      '_blank',
-      'noopener,noreferrer'
+      '_blank', 'noopener,noreferrer'
     );
   } else {
     toast('GitHub 저장소를 먼저 연결해 주세요.', 'error');
@@ -729,8 +706,7 @@ function openGithubNewIssue() {
 
 // 이슈 상세 패널
 async function openDrawer(number) {
-  if (!state.connected) return;
-
+  if (!state.connected || loggingOut) return;
   const id = connectionId;
 
   $('#drawerOverlay').hidden = false;
@@ -743,12 +719,11 @@ async function openDrawer(number) {
 
   try {
     const issue = await api(`/api/issues/${number}`);
-
-    if (id === connectionId && state.selected === number) {
+    if (!loggingOut && id === connectionId && state.selected === number) {
       drawDetail(issue);
     }
   } catch (err) {
-    if (id === connectionId) {
+    if (!loggingOut && id === connectionId) {
       toast(err.message, 'error');
       $('#drawerContent').innerHTML =
         '<p class="subtle-empty">이슈 상세 정보를 가져올 수 없습니다.</p>';
@@ -779,8 +754,7 @@ function drawDetail(issue) {
 
   if (analysis) {
     const suggestions = Array.isArray(analysis.suggestions)
-      ? analysis.suggestions
-      : [];
+      ? analysis.suggestions : [];
 
     analysisHtml = `
       <div class="analysis-card">
@@ -840,21 +814,18 @@ function drawDetail(issue) {
   `;
 
   const link = safeGithubUrl(issue.html_url);
-
   $('#drawerGithub').hidden = !link;
   $('#drawerGithub').dataset.url = link || '';
-
   $('#analyzeLabel').textContent = done ? '다시 분석' : 'AI 분석 실행';
   $('#analyzeBtn').dataset.force = done ? 'true' : 'false';
 }
 
 // GPT 이슈 분석
 async function runAnalysis() {
-  if (state.busy || state.selected == null || !state.connected) return;
+  if (state.busy || state.selected == null || !state.connected || loggingOut) return;
 
   const number = state.selected;
   const id = connectionId;
-
   state.busy = true;
 
   const button = $('#analyzeBtn');
@@ -864,21 +835,18 @@ async function runAnalysis() {
   try {
     const result = await api(`/api/issues/${number}/analyze`, {
       method: 'POST',
-      body: JSON.stringify({
-        force: button.dataset.force === 'true'
-      }),
+      body: JSON.stringify({ force: button.dataset.force === 'true' }),
       timeoutMs: 120000
     });
 
-    if (id !== connectionId) return;
+    if (loggingOut || id !== connectionId) return;
 
     if (result.skipped) {
       toast(result.reason || '분석을 건너뛰었습니다.', 'error');
     } else {
-      toast(
-        result.applied
-          ? '분석 완료! 결과가 저장되었습니다.'
-          : 'GPT 분석 완료. GitHub 쓰기가 비활성화되어 결과는 저장되지 않았습니다.'
+      toast(result.applied
+        ? '분석 완료! 결과가 저장되었습니다.'
+        : 'GPT 분석 완료. GitHub 쓰기가 비활성화되어 결과는 저장되지 않았습니다.'
       );
 
       if (result.notification_error) {
@@ -887,18 +855,21 @@ async function runAnalysis() {
 
       await refresh(true);
 
-      if (id === connectionId && state.selected === number && result.issue) {
+      if (!loggingOut && id === connectionId &&
+          state.selected === number && result.issue) {
         drawDetail(result.issue);
       }
     }
   } catch (err) {
-    if (id === connectionId) {
+    if (!loggingOut && id === connectionId) {
       toast(err.message, 'error');
       $('#analyzeLabel').textContent = 'AI 분석 실행';
     }
   } finally {
-    state.busy = false;
-    button.disabled = false;
+    if (id === connectionId) {
+      state.busy = false;
+      button.disabled = false;
+    }
   }
 }
 
@@ -929,7 +900,6 @@ function registerEvents() {
 
   $('#closeDrawer').addEventListener('click', closeDrawer);
   $('#drawerOverlay').addEventListener('click', closeDrawer);
-
   $('#analyzeBtn').addEventListener('click', runAnalysis);
 
   $('#drawerGithub').addEventListener('click', () => {
@@ -947,11 +917,11 @@ function registerEvents() {
   });
 
   $('#setupRepoSearch').addEventListener('input', renderRepositoryList);
-
   $('#createRepoForm').addEventListener('submit', createRepository);
   $('#setupForm').addEventListener('submit', connectWorkspace);
 
   $('#changeRepoBtn').addEventListener('click', () => {
+    if (loggingOut) return;
     state.selectedRepo = '';
     showSetupStep('setupRepository');
     loadRepositories();
@@ -969,9 +939,7 @@ async function start() {
   registerEvents();
 
   $('#todayDate').textContent = new Intl.DateTimeFormat('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
+    year: 'numeric', month: 'long', day: 'numeric'
   }).format(new Date());
 
   const hash = (location.hash || '').slice(1);
@@ -983,9 +951,10 @@ async function start() {
   try {
     await checkLogin();
   } catch (err) {
-    $('#setupScreen').hidden = false;
-    showSetupStep('setupLogin');
-    toast(err.message, 'error');
+    if (!loggingOut) {
+      showSetupStep('setupLogin');
+      toast(err.message, 'error');
+    }
   }
 }
 

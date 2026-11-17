@@ -25,6 +25,7 @@ from flask import (
     session,
     url_for,
 )
+
 from werkzeug.exceptions import HTTPException
 
 from agent.config import get_github_app_config, get_user_config
@@ -36,6 +37,7 @@ from agent.github_auth import (
     get_installations,
     get_installation_repositories,
 )
+
 from agent.github_client import GitHubError
 from agent.service import Service
 
@@ -82,7 +84,15 @@ def get_login_session() -> LoginSession | None:
     with SESSION_LOCK:
         data = LOGIN_SESSIONS.get(sid)
 
-    if data is None or data.expires_at <= time.time():
+    if data is None:
+        session.pop("sid", None)
+        return None
+
+    if data.expires_at <= time.time():
+        with SESSION_LOCK:
+            LOGIN_SESSIONS.pop(sid, None)
+
+        session.pop("sid", None)
         return None
 
     return data
@@ -125,7 +135,6 @@ def create_app() -> Flask:
     # 외부 사이트에서 보내는 데이터 변경 요청 차단
     @app.before_request
     def check_request():
-        # 일반 페이지 이동과 GitHub 로그인 요청은 허용
         if request.method in {"GET", "HEAD", "OPTIONS"}:
             return None
 
@@ -134,7 +143,6 @@ def create_app() -> Flask:
                 "error": "허용되지 않은 요청입니다."
             }), 403
 
-        # 요청을 보낸 사이트 확인
         origin = request.headers.get("Origin")
 
         if origin:
@@ -148,7 +156,6 @@ def create_app() -> Flask:
                     "error": "허용되지 않은 요청 출처입니다."
                 }), 403
 
-        # 데이터 변경 요청은 JSON만 허용
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             if not request.is_json:
                 return jsonify({
@@ -220,7 +227,6 @@ def create_app() -> Flask:
                 "GitHub 저장소를 먼저 선택해 주세요."
             )
 
-        # 선택한 저장소에 접근 권한이 있는지 확인
         repos = get_installation_repositories(
             login.token,
             installation_id,
@@ -285,7 +291,6 @@ def create_app() -> Flask:
         received = request.args.get("state", "")
         code = request.args.get("code", "")
 
-        # 로그인 요청과 응답이 일치하는지 확인
         if (
             not expected
             or not received
@@ -300,6 +305,14 @@ def create_app() -> Flask:
         user = get_current_user(token)
 
         clean_sessions()
+
+        # 이전 로그인 세션이 남아 있다면 정리
+        old_sid = session.get("sid")
+
+        if old_sid:
+            with SESSION_LOCK:
+                LOGIN_SESSIONS.pop(old_sid, None)
+
         sid = secrets.token_urlsafe(32)
 
         # 로그인 정보를 서버에 저장
@@ -324,12 +337,30 @@ def create_app() -> Flask:
             return jsonify({
                 "authenticated": False,
                 "user": None,
+                "selected_repo": "",
             })
+
+        with login.lock:
+            selected_repo = login.repo
 
         return jsonify({
             "authenticated": True,
             "user": login.user,
-            "selected_repo": login.repo,
+            "selected_repo": selected_repo,
+        })
+
+    # GitHub 계정 전환 안내 정보
+    @app.get("/api/auth/account-switch")
+    def account_switch():
+        return jsonify({
+            "ok": True,
+            "message": (
+                "다른 GitHub 계정을 사용하려면 "
+                "GitHub에서 계정을 전환한 뒤 "
+                "다시 로그인해 주세요."
+            ),
+            "github_url": "https://github.com/",
+            "login_url": url_for("github_login"),
         })
 
     # GitHub App 설치 목록 조회
@@ -342,7 +373,9 @@ def create_app() -> Flask:
         })
 
     # GitHub App에 연결된 저장소 조회
-    @app.get("/api/github/installations/<int:installation_id>/repositories")
+    @app.get(
+        "/api/github/installations/<int:installation_id>/repositories"
+    )
     def repositories(installation_id: int):
         login = require_login()
 
@@ -483,12 +516,31 @@ def create_app() -> Flask:
     def logout():
         sid = session.get("sid")
 
+        # 서버에 저장된 로그인 정보 삭제
         if sid:
             with SESSION_LOCK:
                 LOGIN_SESSIONS.pop(sid, None)
 
+        # 브라우저의 Flask 세션 초기화
         session.clear()
-        return jsonify({"ok": True})
+
+        response = jsonify({
+            "ok": True,
+            "authenticated": False,
+            "message": "IssueFlow AI에서 로그아웃되었습니다.",
+        })
+
+        # Flask 세션 쿠키 만료
+        response.delete_cookie(
+            app.config.get("SESSION_COOKIE_NAME", "session"),
+            path=app.config.get("SESSION_COOKIE_PATH") or "/",
+            domain=app.config.get("SESSION_COOKIE_DOMAIN"),
+            secure=app.config.get("SESSION_COOKIE_SECURE", False),
+            httponly=app.config.get("SESSION_COOKIE_HTTPONLY", True),
+            samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+        )
+
+        return response
 
     # 대시보드 설정 조회
     @app.get("/api/config")
