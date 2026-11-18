@@ -108,12 +108,23 @@
           </div>
         </div>
 
-        <a id="githubLoginBtn" class="setup-btn welcome-start" href="/auth/github">
+        <button id="welcomeStartBtn" class="setup-btn welcome-start" type="button">
           시작하기
           <svg viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </a>
-        <p class="setup-note">시작하기를 누르면 GitHub 공식 인증 페이지로 이동합니다.<br>GitHub 계정으로 로그인하거나 지원되는 Google·Apple 로그인을 이용할 수 있습니다.</p>
+        </button>
+        <p class="setup-note">시작하기를 누르면 로그인 화면으로 이동합니다.</p>
         <div class="welcome-footer">GitHub App 인증 · 별도의 GitHub 토큰 입력 불필요</div>
+      </section>
+
+      <!-- 로그인: GitHub OAuth는 이 버튼을 눌렀을 때만 시작 -->
+      <section id="setupOauth" class="setup-step" hidden>
+        <div class="welcome-label">SECURE GITHUB SIGN-IN</div>
+        <h1>GitHub로 로그인</h1>
+        <p class="setup-description">GitHub 계정으로 인증해 IssueFlow AI 워크스페이스에 연결하세요.</p>
+        <a id="githubLoginBtn" class="setup-btn welcome-start" href="/auth/github">GitHub로 로그인</a>
+        <p id="oauthLoginError" class="setup-error" role="alert" hidden></p>
+        <button id="backToWelcomeBtn" class="setup-btn secondary" type="button">뒤로</button>
+        <p class="setup-note">인증이 완료된 뒤에도 저장소를 직접 선택해야 대시보드가 열립니다.</p>
       </section>
 
       <!-- 2단계: 저장소 선택 또는 생성 -->

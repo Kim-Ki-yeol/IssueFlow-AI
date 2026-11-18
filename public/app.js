@@ -355,7 +355,7 @@ function toast(message, type = 'success') {
 
 // 초기 연결 화면
 function showSetupStep(step) {
-  ['setupLoading', 'setupLogin', 'setupRepository', 'setupCredentials'].forEach(id => {
+  ['setupLoading', 'setupLogin', 'setupOauth', 'setupRepository', 'setupCredentials'].forEach(id => {
     const element = $(`#${id}`);
     if (element) element.hidden = id !== step;
   });
@@ -420,21 +420,21 @@ function resetWorkspace() {
 
 // 로그인 상태 확인
 async function checkLogin() {
-  if (loggingOut) return;
+  if (loggingOut) return null;
 
   const id = ++authCheckId;
   const connection = connectionId;
   const result = await api('/api/auth/me');
 
   // 오래된 인증 확인 결과는 화면에 적용하지 않음
-  if (loggingOut || id !== authCheckId || connection !== connectionId) return;
+  if (loggingOut || id !== authCheckId || connection !== connectionId) return null;
 
   if (!result.authenticated) {
     state.selectedRepo = '';
     state.repositories = [];
     clearGithubUser();
     showSetupStep('setupLogin');
-    return;
+    return false;
   }
 
   const user = result.user || {};
@@ -457,13 +457,14 @@ async function checkLogin() {
     } else {
       showSetupStep('setupCredentials');
     }
-    return;
+    return true;
   }
 
   state.selectedRepo = '';
   $('#selectedRepoName').textContent = '';
   showSetupStep('setupRepository');
   await loadRepositories();
+  return true;
 }
 
 async function retryLoginCheck() {
@@ -1675,6 +1676,17 @@ function registerEvents() {
     button.addEventListener('click', () => selectView(button.dataset.go));
   });
 
+  $('#welcomeStartBtn').addEventListener('click', () => {
+    $('#oauthLoginError').hidden = true;
+    $('#oauthLoginError').textContent = '';
+    showSetupStep('setupOauth');
+  });
+  $('#backToWelcomeBtn').addEventListener('click', () => {
+    $('#oauthLoginError').hidden = true;
+    $('#oauthLoginError').textContent = '';
+    showSetupStep('setupLogin');
+  });
+
   [$('#refreshBtn'), $('#issuesRefresh')].forEach(button => {
     button.addEventListener('click', () => refresh());
   });
@@ -1779,9 +1791,25 @@ async function start() {
 
   selectView(allowed.includes(hash) ? hash : 'dashboard');
   showSetupStep('setupLoading');
+  const oauthError = new URLSearchParams(location.search).get('auth_error');
 
   try {
-    await checkLogin();
+    const authenticated = await checkLogin();
+    if (authenticated === false && oauthError) {
+      const messages = {
+        state: '로그인 검증이 만료되었거나 브라우저 세션이 달라졌습니다. 다시 시도해 주세요.',
+        denied: 'GitHub 로그인이 취소되었습니다. 원하면 다시 시도할 수 있습니다.',
+        config: 'GitHub 로그인 설정을 확인해 주세요.',
+        github: 'GitHub 인증을 완료하지 못했습니다. 다시 시도해 주세요.'
+      };
+      $('#oauthLoginError').textContent =
+        messages[oauthError] || messages.github;
+      $('#oauthLoginError').hidden = false;
+      showSetupStep('setupOauth');
+      const url = new URL(location.href);
+      url.searchParams.delete('auth_error');
+      history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    }
   } catch (err) {
     if (!loggingOut) {
       $('#setupLoadingMessage').textContent =

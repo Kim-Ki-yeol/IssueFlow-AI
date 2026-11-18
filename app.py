@@ -332,12 +332,17 @@ def create_app() -> Flask:
     # GitHub 로그인 시작
     @app.get("/auth/github")
     def github_login():
-        redirect_uri = oauth_redirect_uri()
-        if urlsplit(redirect_uri).netloc.lower() != request.host.lower():
-            raise GitHubAuthError(
-                "GitHub 로그인은 Callback URL과 같은 도메인에서 시작해 주세요."
-            )
-        url, state = create_login_url(redirect_uri)
+        try:
+            redirect_uri = oauth_redirect_uri()
+            if urlsplit(redirect_uri).netloc.lower() != request.host.lower():
+                raise GitHubAuthError(
+                    "GitHub 로그인은 Callback URL과 같은 도메인에서 시작해 주세요."
+                )
+            url, state = create_login_url(redirect_uri)
+        except GitHubAuthError:
+            return redirect(url_for("home", auth_error="github"))
+        except RuntimeError:
+            return redirect(url_for("home", auth_error="config"))
 
         session["oauth_state"] = state
         session["oauth_redirect_uri"] = redirect_uri
@@ -357,13 +362,16 @@ def create_app() -> Flask:
             or not received
             or not hmac.compare_digest(expected, received)
         ):
-            raise GitHubAuthError(
-                "로그인 검증에 실패했습니다. 다시 시도해 주세요."
-            )
+            return redirect(url_for("home", auth_error="state"))
+        if request.args.get("error"):
+            return redirect(url_for("home", auth_error="denied"))
 
         # GitHub 인증 코드를 토큰으로 교환
-        token = exchange_code(code, redirect_uri=redirect_uri or oauth_redirect_uri())
-        user = get_current_user(token)
+        try:
+            token = exchange_code(code, redirect_uri=redirect_uri or oauth_redirect_uri())
+            user = get_current_user(token)
+        except GitHubAuthError:
+            return redirect(url_for("home", auth_error="github"))
 
         clean_sessions()
 

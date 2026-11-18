@@ -35,6 +35,7 @@ def create_login_url(redirect_uri: str | None = None) -> tuple[str, str]:
     params = {
         "client_id": cfg.client_id,
         "state": state,
+        "prompt": "select_account",
     }
     if redirect_uri:
         params["redirect_uri"] = redirect_uri

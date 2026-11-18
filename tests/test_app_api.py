@@ -78,6 +78,9 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(home.status_code, 200)
         self.assertIn('id="setupLoading"', markup)
         self.assertRegex(markup, r'id="setupLogin"[^>]*hidden')
+        self.assertRegex(markup, r'<button id="welcomeStartBtn"[^>]*type="button"')
+        self.assertRegex(markup, r'<section id="setupOauth"[^>]*hidden')
+        self.assertRegex(markup, r'<a id="githubLoginBtn"[^>]*href="/auth/github"')
         self.assertEqual(js.status_code, 200)
         self.assertEqual(css.status_code, 200)
         self.assertIn("javascript", js.mimetype)
@@ -276,8 +279,8 @@ class SettingsApiTests(unittest.TestCase):
                 "/auth/github",
                 base_url="https://issue-flow-ai-preview.vercel.app",
             )
-        self.assertEqual(response.status_code, 401)
-        self.assertIn("Callback URL", response.json["error"])
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("auth_error=github", response.headers["Location"])
         create_url.assert_not_called()
 
     def test_issue_crud_and_comments_routes_use_mocked_github_client(self):

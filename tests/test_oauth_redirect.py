@@ -24,6 +24,7 @@ class OAuthRedirectTests(unittest.TestCase):
         query = parse_qs(urlsplit(url).query)
         self.assertEqual(query["redirect_uri"], [self.redirect_uri])
         self.assertEqual(len(query["state"][0]), len(state))
+        self.assertEqual(query["prompt"], ["select_account"])
 
     def test_code_exchange_reuses_same_callback_uri(self):
         response = SimpleNamespace(
