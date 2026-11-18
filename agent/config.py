@@ -114,9 +114,6 @@ def get_user_config(data: dict) -> Config:
     if not token:
         raise ValueError("GitHub 인증이 필요합니다.")
 
-    if not api_key:
-        raise ValueError("OpenAI API Key를 입력해 주세요.")
-
     if discord and not re.fullmatch(
         r"https://(?:discord\.com|discordapp\.com)"
         r"/api/webhooks/[0-9]+/[A-Za-z0-9_-]+",

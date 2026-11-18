@@ -1,4 +1,4 @@
-"""GitHub 이슈 조회부터 GPT 분석, 결과 등록, Discord 전송까지 처리."""
+"""GitHub 이슈 조회, 수동 GPT 분석, 사용자 승인 후 반영."""
 from __future__ import annotations
 
 import json
@@ -55,44 +55,71 @@ class Service:
         )
 
     def run(self, number: int, force: bool = False) -> dict:
+        """Backward-compatible manual analysis entry point; never writes externally."""
         client = self._client()
         issue = client.get_issue(number)
-        already_labeled = "ai:processed" in issue.get("labels", [])
-        if issue.get("analysis") and already_labeled and not force:
-            return {"skipped": True, "reason": "이미 분석된 이슈입니다.", "issue": issue}
+        analysis = analyze_issue(issue, self.cfg)
+        if analysis.get("check_recent_commits"):
+            try:
+                commits = client.recent_commits()
+                if commits:
+                    analysis = analyze_issue(issue, self.cfg, commits=commits)
+            except Exception:
+                # Commit context is optional; keep the issue-only result.
+                pass
+        issue["analysis"] = analysis
+        return {"skipped": False, "analysis": analysis, "applied": False, "issue": issue}
 
-        # 댓글만 있고 라벨 등록이 실패한 경우에는 기존 결과를 재사용
-        analysis = issue.get("analysis") if issue.get("analysis") and not force else None
-        if analysis is None:
-            analysis = analyze_issue(issue, self.cfg)
-            if analysis.get("check_recent_commits"):
-                try:
-                    commits = client.recent_commits()
-                    if commits:
-                        analysis = analyze_issue(issue, self.cfg, commits=commits)
-                except Exception:
-                    # 커밋 조회가 실패해도 이슈 본문 분석은 그대로 사용
-                    pass
+    def apply(
+        self, number: int, analysis: dict, *, apply_labels: bool, post_comment: bool,
+        send_notification: bool = True,
+    ) -> dict:
+        """Apply only explicitly selected changes. Discord follows successful writes."""
+        if not self.cfg.github_writes:
+            raise RuntimeError("GitHub 쓰기 권한이 없습니다.")
+        if not (apply_labels or post_comment):
+            raise ValueError("적용할 항목을 하나 이상 선택해 주세요.")
 
-        labels = [CATEGORY_LABELS[analysis["category"]], f"priority:{analysis['priority']}", "ai:processed"]
-        applied = False
-        if self.cfg.github_writes:
-            client.upsert_comment(number, self.comment(analysis))
-            # 댓글이 저장된 다음 완료 라벨 부착. 실패하면 재실행 시 복구 가능
-            client.apply_labels(number, labels, issue["labels"])
-            applied = True
+        client = self._client()
+        issue = client.get_issue(number)
+        errors: list[str] = []
+        labels_applied = False
+        comment_applied = False
+        labels = list(dict.fromkeys(
+            analysis.get("recommended_labels")
+            or [CATEGORY_LABELS[analysis["category"]], f"priority:{analysis['priority']}"]
+        ))
+        if apply_labels:
+            try:
+                client.apply_labels(number, labels, issue["labels"])
+                labels_applied = True
+            except (GitHubError, RuntimeError) as exc:
+                errors.append(f"라벨: {str(exc)[:240]}")
+        if post_comment:
+            try:
+                client.upsert_comment(number, self.comment(analysis))
+                comment_applied = True
+            except (GitHubError, RuntimeError) as exc:
+                errors.append(f"댓글: {str(exc)[:240]}")
 
+        succeeded = labels_applied or comment_applied
+        all_selected_succeeded = (
+            (not apply_labels or labels_applied)
+            and (not post_comment or comment_applied)
+        )
+        status = "applied" if all_selected_succeeded else ("partial" if succeeded else "failed")
         notification_sent = False
         notification_error = None
-        if applied and self.cfg.discord_webhook_url:
+        if succeeded and send_notification and self.cfg.discord_webhook_url:
             try:
                 notification_sent = send_discord(self.cfg.discord_webhook_url, issue, analysis)
             except RuntimeError as exc:
                 notification_error = str(exc)
 
-        latest = client.get_issue(number) if applied else {**issue, "analysis": analysis}
+        latest = client.get_issue(number) if succeeded else issue
         return {
-            "skipped": False, "analysis": analysis, "labels": labels, "applied": applied,
-            "notification_sent": notification_sent, "notification_error": notification_error,
-            "issue": latest,
+            "status": status, "applied": succeeded, "labels_applied": labels_applied,
+            "comment_applied": comment_applied, "labels": labels,
+            "errors": errors, "notification_sent": notification_sent,
+            "notification_error": notification_error, "issue": latest,
         }

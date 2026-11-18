@@ -52,8 +52,30 @@ def analyze_issue(issue: dict, cfg: Config, commits: list[dict] | None = None) -
             f"최근 커밋: {commit_context or '(조회하지 않음)'}"
         )),
     ]
-    result = structured.invoke(messages)
+    try:
+        result = structured.invoke(messages)
+    except Exception as exc:
+        # Provider exception strings may echo request details; never forward/log them.
+        raise RuntimeError(
+            f"OpenAI 분석 요청에 실패했습니다 ({type(exc).__name__})."
+        ) from exc
     data = result.model_dump()
     data["suggestions"] = [str(s)[:280] for s in data.get("suggestions", [])[:4]]
+    # Keep the existing structured response compatible while exposing the
+    # approval-screen fields requested by the dashboard.
+    data["solution"] = "\n".join(data["suggestions"])
+    category_labels = {
+        "bug": ["bug"], "feature": ["enhancement"],
+        "documentation": ["documentation"], "question": ["question"],
+    }
+    data["recommended_labels"] = category_labels[data["category"]] + [
+        f"priority:{data['priority']}"
+    ]
+    data["comment_preview"] = (
+        f"## IssueFlow AI 분석 결과\n\n"
+        f"**요약:** {data['summary']}\n\n"
+        f"**예상 원인:** {data['probable_cause']}\n\n"
+        f"**해결 방향:** {data['solution']}"
+    )
     data["source"] = "gpt"
     return data

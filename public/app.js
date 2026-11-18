@@ -7,7 +7,7 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const state = {
   config: null, issues: [], activity: [], selected: null,
   busy: false, view: 'dashboard', repositories: [],
-  selectedRepo: '', openaiKey: '', discordWebhook: '',
+  selectedRepo: '', analysisHistoryId: null,
   connected: false
 };
 
@@ -57,17 +57,19 @@ function miniDate(value) {
 }
 
 function category(issue) {
+  if (issue.analysis?.category) return issue.analysis.category;
   const labels = issue.labels || [];
   if (labels.includes('bug')) return 'bug';
   if (labels.includes('enhancement')) return 'feature';
   if (labels.includes('documentation')) return 'documentation';
   if (labels.includes('question')) return 'question';
-  return issue.analysis?.category || 'unclassified';
+  return 'unclassified';
 }
 
 function priority(issue) {
+  if (issue.analysis?.priority) return issue.analysis.priority;
   const label = (issue.labels || []).find(v => v.startsWith('priority:'));
-  const value = label ? label.split(':')[1] : issue.analysis?.priority || 'none';
+  const value = label ? label.split(':')[1] : 'none';
   return ['high', 'medium', 'low'].includes(value) ? value : 'none';
 }
 
@@ -92,12 +94,6 @@ async function api(path, options = {}) {
 
   try {
     const headers = { ...(requestOptions.headers || {}) };
-
-    // 인증 정보는 로그인 및 로그아웃 요청에 포함하지 않음
-    if (!path.startsWith('/api/auth/')) {
-      if (state.openaiKey) headers['X-IssueFlow-OpenAI-Key'] = state.openaiKey;
-      if (state.discordWebhook) headers['X-IssueFlow-Discord-Webhook'] = state.discordWebhook;
-    }
 
     if (requestOptions.body !== undefined) {
       headers['Content-Type'] = 'application/json';
@@ -169,7 +165,7 @@ function resetWorkspace() {
   Object.assign(state, {
     config: null, issues: [], activity: [], selected: null,
     busy: false, view: 'dashboard', repositories: [],
-    selectedRepo: '', openaiKey: '', discordWebhook: '',
+    selectedRepo: '', analysisHistoryId: null,
     connected: false
   });
 
@@ -226,7 +222,12 @@ async function checkLogin() {
   if (result.selected_repo) {
     state.selectedRepo = result.selected_repo;
     $('#selectedRepoName').textContent = result.selected_repo;
-    showSetupStep('setupCredentials');
+    const settings = await api('/api/settings');
+    if (settings.openai_configured) {
+      await activateWorkspace();
+    } else {
+      showSetupStep('setupCredentials');
+    }
     return;
   }
 
@@ -416,49 +417,86 @@ async function connectWorkspace(event) {
 
   error.textContent = '';
 
-  if (!key) {
-    error.textContent = 'OpenAI API 키를 입력해 주세요.';
-    return;
-  }
-
   button.disabled = true;
-  button.textContent = '연결 확인 중...';
-  state.openaiKey = key;
-  state.discordWebhook = discord;
+  button.textContent = '설정 저장 중...';
 
   try {
-    const [config, issues] = await Promise.all([
-      api('/api/config'),
-      api('/api/issues')
-    ]);
+    const saved = await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ openai_api_key: key, discord_webhook_url: discord })
+    });
 
     if (loggingOut || id !== connectionId) return;
-
-    state.config = config;
-    state.issues = issues.items || [];
-    state.connected = true;
-
-    renderConfig();
-    renderIssues();
-
-    $('#setupForm').reset();
-    $('#setupScreen').hidden = true;
-    selectView('dashboard');
-
-    await refresh(true);
-    if (!loggingOut && id === connectionId) {
-      toast(`${config.repo} 저장소에 연결되었습니다.`);
+    if (!saved.openai_configured) {
+      throw new Error('OpenAI API Key를 입력해 주세요.');
     }
+    await activateWorkspace();
+    if (!loggingOut && id === connectionId) toast(`${state.config.repo} 저장소에 연결되었습니다.`);
   } catch (err) {
-    if (!loggingOut && id === connectionId) {
-      state.openaiKey = '';
-      state.discordWebhook = '';
-      state.connected = false;
-      error.textContent = err.message;
-    }
+    if (!loggingOut && id === connectionId) error.textContent = err.message;
   } finally {
     button.disabled = false;
     button.textContent = '워크스페이스 시작하기';
+  }
+}
+
+async function activateWorkspace() {
+  const [config, issues, activity, analysis] = await Promise.all([
+    api('/api/config'), api('/api/issues'), api('/api/activity'), api('/api/analysis-history')
+  ]);
+  state.config = config;
+  state.issues = issues.items || [];
+  state.activity = activity.items || [];
+  state.connected = true;
+  state.selectedRepo = config.repo;
+
+  renderConfig();
+  renderIssues();
+  renderActivity();
+  renderAnalysisStats(analysis.statistics);
+
+  $('#setupForm').reset();
+  $('#setupScreen').hidden = true;
+  selectView('dashboard');
+  loadSettingStatus();
+}
+
+async function saveIntegrationSettings(event) {
+  event.preventDefault();
+  try {
+    const result = await api('/api/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        openai_api_key: $('#settingsOpenaiKey').value.trim(),
+        discord_webhook_url: $('#settingsDiscord').value.trim()
+      })
+    });
+    $('#settingsOpenaiKey').value = '';
+    $('#settingsDiscord').value = '';
+    await loadSettingStatus();
+    await refresh(true);
+    toast(result.openai_configured ? '연동 설정을 저장했습니다.' : 'OpenAI API Key를 등록해 주세요.');
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function loadSettingStatus() {
+  try {
+    const result = await api('/api/settings');
+    $('#openaiKeyStatus').textContent = result.openai_configured ? '설정됨 · 원본 비공개' : '미설정';
+    $('#discordKeyStatus').textContent = result.discord_configured ? '설정됨 · 원본 비공개' : '미설정';
+  } catch (_) {
+    // Do not surface key or server details in the page.
+  }
+}
+
+async function testIntegration(path) {
+  try {
+    const result = await api(path, { method: 'POST', body: JSON.stringify({}) });
+    toast(result.message || '연결을 확인했습니다.');
+  } catch (error) {
+    toast(error.message, 'error');
   }
 }
 
@@ -561,6 +599,13 @@ function renderMetrics() {
 
   $('#navCount').textContent = total;
   $('#issueCount').textContent = total;
+}
+
+function renderAnalysisStats(stats = {}) {
+  $('#metricAiTotal').textContent = stats.total || 0;
+  $('#metricAiApplied').textContent = stats.applied || 0;
+  $('#metricAiPending').textContent = stats.pending || 0;
+  $('#metricAiFailed').textContent = stats.failed || 0;
 }
 
 function renderIssues() {
@@ -670,8 +715,9 @@ async function refresh(silent = false) {
   const id = connectionId;
 
   try {
-    const [config, issues, activity] = await Promise.all([
-      api('/api/config'), api('/api/issues'), api('/api/activity')
+    const [config, issues, activity, analysis] = await Promise.all([
+      api('/api/config'), api('/api/issues'), api('/api/activity'),
+      api('/api/analysis-history')
     ]);
 
     if (loggingOut || id !== connectionId) return;
@@ -679,6 +725,7 @@ async function refresh(silent = false) {
     state.config = config;
     state.issues = issues.items || [];
     state.activity = activity.items || [];
+    renderAnalysisStats(analysis.statistics);
 
     renderConfig();
     renderIssues();
@@ -743,6 +790,7 @@ function drawDetail(issue) {
   const type = category(issue);
   const level = priority(issue);
   const analysis = issue.analysis;
+  state.analysisHistoryId = issue.analysis_id || state.analysisHistoryId;
 
   let analysisHtml = `
     <div class="analysis-placeholder">
@@ -756,6 +804,9 @@ function drawDetail(issue) {
     const suggestions = Array.isArray(analysis.suggestions)
       ? analysis.suggestions : [];
 
+    const discordRetry = issue.discord_status === 'failed'
+      ? '<button type="button" class="btn btn-outline btn-sm" id="retryDiscordBtn">Discord 알림 재시도</button>'
+      : '';
     analysisHtml = `
       <div class="analysis-card">
         <div class="analysis-header">
@@ -786,6 +837,27 @@ function drawDetail(issue) {
         <div class="analysis-detail">
           <h4>권장 점검 방법</h4>
           <ul>${suggestions.map(v => `<li>${escapeHtml(v)}</li>`).join('')}</ul>
+        </div>
+        <div class="analysis-detail">
+          <h4>해결 방향</h4>
+          <p>${escapeHtml(analysis.solution || suggestions.join('\n') || '-')}</p>
+        </div>
+        <div class="analysis-detail">
+          <h4>GitHub 댓글 미리보기</h4>
+          <div class="detail-body">${escapeHtml(analysis.comment_preview || analysis.summary || '-')}</div>
+        </div>
+        ${issue.analysis_comparison && Object.keys(issue.analysis_comparison).length
+          ? `<div class="analysis-detail"><h4>이전 분석과 달라진 항목</h4><ul>${
+            Object.entries(issue.analysis_comparison).map(([key, change]) =>
+              `<li>${escapeHtml(key)}: ${escapeHtml(String(change.previous))} → ${escapeHtml(String(change.current))}</li>`
+            ).join('')
+          }</ul></div>` : ''}
+        <div class="analysis-detail">
+          <h4>GitHub 반영 미리보기</h4>
+          <label><input type="checkbox" id="applyRecommendedLabels" checked> 추천 라벨 적용: ${escapeHtml((analysis.recommended_labels || []).join(', '))}</label><br>
+          <label><input type="checkbox" id="applyAnalysisComment" checked> AI 분석 댓글 등록</label>
+          <button type="button" class="btn btn-outline btn-sm" id="applyAnalysisBtn">선택 항목 GitHub에 적용</button>
+          ${discordRetry}
         </div>
       </div>
     `;
@@ -818,6 +890,10 @@ function drawDetail(issue) {
   $('#drawerGithub').dataset.url = link || '';
   $('#analyzeLabel').textContent = done ? '다시 분석' : 'AI 분석 실행';
   $('#analyzeBtn').dataset.force = done ? 'true' : 'false';
+  const applyButton = $('#applyAnalysisBtn');
+  if (applyButton) applyButton.addEventListener('click', applyAnalysis);
+  const discordButton = $('#retryDiscordBtn');
+  if (discordButton) discordButton.addEventListener('click', retryDiscord);
 }
 
 // GPT 이슈 분석
@@ -844,14 +920,13 @@ async function runAnalysis() {
     if (result.skipped) {
       toast(result.reason || '분석을 건너뛰었습니다.', 'error');
     } else {
+      state.analysisHistoryId = result.history_id;
+      result.issue.analysis_id = result.history_id;
+      result.issue.analysis_comparison = result.comparison || null;
       toast(result.applied
-        ? '분석 완료! 결과가 저장되었습니다.'
-        : 'GPT 분석 완료. GitHub 쓰기가 비활성화되어 결과는 저장되지 않았습니다.'
+        ? '분석 결과를 저장했습니다. 적용할 항목을 선택해 주세요.'
+        : '분석 결과를 저장했습니다. GitHub에 반영하려면 승인해 주세요.'
       );
-
-      if (result.notification_error) {
-        toast(result.notification_error, 'error');
-      }
 
       await refresh(true);
 
@@ -870,6 +945,56 @@ async function runAnalysis() {
       state.busy = false;
       button.disabled = false;
     }
+  }
+}
+
+async function applyAnalysis() {
+  const number = state.selected;
+  const historyId = state.analysisHistoryId;
+  if (!number || !historyId) return;
+  const applyLabels = $('#applyRecommendedLabels')?.checked || false;
+  const postComment = $('#applyAnalysisComment')?.checked || false;
+  if (!applyLabels && !postComment) {
+    toast('GitHub에 반영할 항목을 선택해 주세요.', 'error');
+    return;
+  }
+  if (!window.confirm('선택한 분석 결과를 실제 GitHub 이슈에 반영할까요?')) return;
+  const button = $('#applyAnalysisBtn');
+  button.disabled = true;
+  try {
+    const outcome = await api(`/api/issues/${number}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({
+        history_id: historyId, apply_labels: applyLabels, post_comment: postComment
+      }),
+      timeoutMs: 60000
+    });
+    toast(outcome.status === 'applied' ? 'GitHub에 적용했습니다.' :
+      outcome.status === 'partial' ? '일부 항목만 적용되었습니다.' : 'GitHub 반영에 실패했습니다.',
+    outcome.status === 'applied' ? 'success' : 'error');
+    if (outcome.notification_error) toast(outcome.notification_error, 'error');
+    await refresh(true);
+    if (outcome.issue) {
+      outcome.issue.analysis_id = historyId;
+      drawDetail(outcome.issue);
+    }
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function retryDiscord() {
+  if (!state.analysisHistoryId) return;
+  try {
+    const result = await api(`/api/analysis-history/${state.analysisHistoryId}/retry-discord`, {
+      method: 'POST', body: JSON.stringify({})
+    });
+    toast(result.message || 'Discord 알림을 재전송했습니다.');
+    await openDrawer(state.selected);
+  } catch (error) {
+    toast(error.message, 'error');
   }
 }
 
@@ -919,6 +1044,9 @@ function registerEvents() {
   $('#setupRepoSearch').addEventListener('input', renderRepositoryList);
   $('#createRepoForm').addEventListener('submit', createRepository);
   $('#setupForm').addEventListener('submit', connectWorkspace);
+  $('#integrationSettingsForm').addEventListener('submit', saveIntegrationSettings);
+  $('#testOpenaiBtn').addEventListener('click', () => testIntegration('/api/settings/test-openai'));
+  $('#testDiscordBtn').addEventListener('click', () => testIntegration('/api/settings/test-discord'));
 
   $('#changeRepoBtn').addEventListener('click', () => {
     if (loggingOut) return;

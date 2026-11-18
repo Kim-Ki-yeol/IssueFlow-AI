@@ -56,17 +56,27 @@ class FakeGitHub:
 
 
 class ServiceTests(unittest.TestCase):
-    def test_live_analysis_is_saved_to_github(self):
+    def test_analysis_never_writes_without_explicit_approval(self):
         github = FakeGitHub()
         service = Service(make_config())
         service.github = github
         with patch("agent.service.analyze_issue", return_value=ANALYSIS) as mock_gpt:
             result = service.run(12)
         mock_gpt.assert_called_once()
-        self.assertTrue(result["applied"])
-        self.assertEqual(github.applied[0][1], ["bug", "priority:high", "ai:processed"])
+        self.assertFalse(result["applied"])
+        self.assertEqual(github.applied, [])
+        self.assertEqual(github.comments, [])
+        self.assertEqual(result["analysis"], ANALYSIS)
+
+    def test_approved_selected_changes_are_applied(self):
+        github = FakeGitHub()
+        service = Service(make_config())
+        service.github = github
+        result = service.apply(12, ANALYSIS, apply_labels=True, post_comment=True)
+        self.assertEqual(result["status"], "applied")
+        self.assertTrue(result["labels_applied"])
+        self.assertTrue(result["comment_applied"])
         self.assertIn(COMMENT_MARKER, github.comments[0][1])
-        self.assertTrue(service.run(12)["skipped"])
 
     def test_read_only_still_calls_real_gpt_but_does_not_write(self):
         github = FakeGitHub()
@@ -92,14 +102,14 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(items[0]["issue_number"], 12)
         self.assertEqual(items[0]["title"], "이슈 업데이트")
 
-    def test_issueflow_labels_replace_old_while_preserving_other_labels(self):
+    def test_issueflow_labels_preserve_existing_and_replace_priority(self):
         c = GitHubClient("test-owner/test-repo", "dummy")
         calls = []
         c.ensure_labels = lambda labels: None
         c.request = lambda method, path, **kw: calls.append((method, path, kw))
         c.apply_labels(12, ["documentation", "priority:low", "ai:processed"], ["bug", "priority:high", "customer", "ai:processed"])
         self.assertEqual(calls[0][0], "PUT")
-        self.assertEqual(calls[0][2]["json"]["labels"], ["customer", "documentation", "priority:low", "ai:processed"])
+        self.assertEqual(calls[0][2]["json"]["labels"], ["bug", "customer", "documentation", "priority:low", "ai:processed"])
 
     def test_reanalysis_updates_previous_comment(self):
         c = GitHubClient("test-owner/test-repo", "dummy")

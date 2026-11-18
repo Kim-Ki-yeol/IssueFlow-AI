@@ -1,17 +1,20 @@
-# 기본 브랜치에 올려두면 새 이슈 등록 시 자동으로 실행됨
-name: IssueFlow AI - Issue Triage
+# 수동 실행만 허용합니다. 새 이슈 생성만으로 AI 분석하지 않습니다.
+name: IssueFlow AI - Manual Issue Analysis
 
 on:
-  issues:
-    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 분석할 이슈 번호
+        required: true
+        type: number
 
 permissions:
   contents: read
-  issues: write
+  issues: read
 
-# 같은 이슈가 동시에 분석되지 않도록 설정
 concurrency:
-  group: issueflow-${{ github.event.issue.number }}
+  group: issueflow-${{ inputs.issue_number }}
   cancel-in-progress: false
 
 jobs:
@@ -30,13 +33,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Analyze issue
+      - name: Analyze issue (read-only)
         env:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: gpt-4.1-mini
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ENABLE_GITHUB_WRITES: 'true'
         run: python -m agent.workflow

@@ -119,9 +119,14 @@ class GitHubClient:
                         raise
 
     def apply_labels(self, number: int, labels: list[str], existing: list[str]) -> None:
-        # 다른 사람이 붙인 라벨은 유지하고, IssueFlow가 관리하는 라벨만 새 값으로 교체
+        # Preserve unrelated labels; replace only conflicting priority values.
         self.ensure_labels(labels)
-        remaining = [label for label in existing if label not in COLORS]
+        has_new_priority = any(label.startswith("priority:") for label in labels)
+        remaining = [
+            label for label in existing
+            if label not in labels
+            and not (has_new_priority and label.startswith("priority:"))
+        ]
         updated = list(dict.fromkeys(remaining + labels))
         self.request("PUT", f"/issues/{number}/labels", json={"labels": updated})
 

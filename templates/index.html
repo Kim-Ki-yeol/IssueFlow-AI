@@ -164,7 +164,7 @@
 
         <form id="setupForm">
           <label for="setupOpenaiKey">OpenAI API Key</label>
-          <input id="setupOpenaiKey" type="password" placeholder="OpenAI API 키 입력" autocomplete="off" required>
+          <input id="setupOpenaiKey" type="password" placeholder="OpenAI API 키 입력" autocomplete="new-password">
 
           <label for="setupDiscord">Discord Webhook URL <small>(선택)</small></label>
           <input id="setupDiscord" type="password" placeholder="https://discord.com/api/webhooks/..." autocomplete="off">
@@ -174,7 +174,7 @@
           <button id="changeRepoBtn" class="setup-btn secondary" type="button">다른 저장소 선택</button>
         </form>
 
-        <p class="setup-note">OpenAI API 키는 브라우저 메모리에만 보관하며 새로고침하면 다시 입력해야 합니다. 분석 요청 시 서버로 전송됩니다.</p>
+        <p class="setup-note">키와 Webhook은 서버에서 암호화해 저장하며 화면에 다시 표시하지 않습니다.</p>
       </section>
     </div>
   </div>
@@ -249,6 +249,13 @@
             <article class="metric-card"><div class="metric-top"><span>높은 우선순위</span><svg class="icon"><use href="#i-zap"/></svg></div><div class="metric-value" id="metricHigh">0</div><div class="metric-desc">확인이 필요한 이슈</div></article>
             <article class="metric-card"><div class="metric-top"><span>분석 대기</span><svg class="icon"><use href="#i-clock"/></svg></div><div class="metric-value" id="metricPending">0</div><div class="metric-desc">아직 분류되지 않음</div></article>
           </div>
+          <div class="section-caption"><strong>AI 작업 통계</strong><span>저장된 분석 이력 기준</span></div>
+          <div class="metrics-grid">
+            <article class="metric-card"><div class="metric-top"><span>전체 분석</span></div><div class="metric-value" id="metricAiTotal">0</div><div class="metric-desc">실행된 AI 분석</div></article>
+            <article class="metric-card"><div class="metric-top"><span>GitHub 적용</span></div><div class="metric-value" id="metricAiApplied">0</div><div class="metric-desc">적용 완료</div></article>
+            <article class="metric-card"><div class="metric-top"><span>적용 대기</span></div><div class="metric-value" id="metricAiPending">0</div><div class="metric-desc">승인 대기</div></article>
+            <article class="metric-card"><div class="metric-top"><span>분석 실패</span></div><div class="metric-value" id="metricAiFailed">0</div><div class="metric-desc">재시도 필요</div></article>
+          </div>
 
           <div class="content-grid">
             <section class="panel issue-panel"><div class="panel-head"><div><h3>최근 이슈</h3><p>제목을 누르면 상세 내용을 볼 수 있습니다.</p></div><button type="button" class="text-button" data-go="issues">전체 보기 <svg class="icon"><use href="#i-arrow"/></svg></button></div><div class="table-wrap"><table class="issues-table"><thead><tr><th>이슈</th><th>유형</th><th>우선순위</th><th>상태</th><th></th></tr></thead><tbody id="recentIssues"><tr><td colspan="5" class="empty-cell">이슈를 불러오는 중입니다.</td></tr></tbody></table></div></section>
@@ -281,6 +288,17 @@
             <section class="panel settings-panel">
               <div class="panel-head"><div><h3>서비스 연결 상태</h3><p>현재 사용자 연결 설정을 기준으로 표시합니다.</p></div></div>
               <div class="integration-list" id="integrationRows"></div>
+              <form id="integrationSettingsForm" class="guide-list">
+                <label for="settingsOpenaiKey">OpenAI API Key <small id="openaiKeyStatus">등록 상태 확인 중</small></label>
+                <input id="settingsOpenaiKey" type="password" autocomplete="new-password" placeholder="변경할 때만 새 키 입력">
+                <label for="settingsDiscord">Discord Webhook URL <small id="discordKeyStatus">등록 상태 확인 중</small></label>
+                <input id="settingsDiscord" type="password" autocomplete="new-password" placeholder="변경할 때만 새 URL 입력">
+                <div class="focus-actions">
+                  <button type="submit" class="btn btn-primary">설정 저장</button>
+                  <button type="button" class="btn btn-outline" id="testOpenaiBtn">OpenAI 연결 테스트</button>
+                  <button type="button" class="btn btn-outline" id="testDiscordBtn">Discord 테스트 전송</button>
+                </div>
+              </form>
             </section>
             <section class="panel settings-panel">
               <div class="panel-head"><div><h3>GitHub 연결 안내</h3><p>GitHub App으로 저장소를 연결하고 AI 분석을 실행합니다.</p></div></div>

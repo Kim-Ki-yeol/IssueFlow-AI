@@ -40,6 +40,11 @@ from agent.github_auth import (
 
 from agent.github_client import GitHubError
 from agent.service import Service
+from agent.notifier import send_discord
+from agent.storage import (
+    get_settings, history as get_history, init_db, save_analysis,
+    save_settings, setting_status, statistics, update_analysis,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -131,6 +136,7 @@ def create_app() -> Flask:
         ),
         MAX_CONTENT_LENGTH=32 * 1024,
     )
+    init_db()
 
     # 외부 사이트에서 보내는 데이터 변경 요청 차단
     @app.before_request
@@ -208,7 +214,7 @@ def create_app() -> Flask:
                 "error": str(exc)
             }), 400
 
-        app.logger.exception("Unexpected error")
+        app.logger.error("Unexpected server error: %s", type(exc).__name__)
 
         return jsonify({
             "error": "서버 오류가 발생했습니다."
@@ -239,19 +245,13 @@ def create_app() -> Flask:
                 "선택한 저장소의 접근 권한이 없습니다."
             )
 
-        api_key = request.headers.get(
-            "X-IssueFlow-OpenAI-Key", ""
-        )
-
-        discord = request.headers.get(
-            "X-IssueFlow-Discord-Webhook", ""
-        )
+        saved = get_settings(login.user.get("id"))
 
         cfg = get_user_config({
             "github_repo": repo,
             "github_token": login.token,
-            "openai_api_key": api_key,
-            "discord_webhook_url": discord,
+            "openai_api_key": saved["openai_api_key"],
+            "discord_webhook_url": saved["discord_webhook_url"],
         })
 
         return Service(cfg)
@@ -303,6 +303,16 @@ def create_app() -> Flask:
         # GitHub 인증 코드를 토큰으로 교환
         token = exchange_code(code)
         user = get_current_user(token)
+        saved = get_settings(user.get("id"))
+        restored_repo, restored_installation = saved["selected_repo"], 0
+        if restored_repo:
+            for installation in get_installations(token):
+                repos = get_installation_repositories(token, installation["id"])
+                if any(item["full_name"] == restored_repo for item in repos):
+                    restored_installation = installation["id"]
+                    break
+            if not restored_installation:
+                restored_repo = ""
 
         clean_sessions()
 
@@ -321,6 +331,8 @@ def create_app() -> Flask:
                 token=token,
                 user=user,
                 expires_at=time.time() + SESSION_LIFETIME,
+                repo=restored_repo,
+                installation_id=restored_installation,
             )
 
         session.clear()
@@ -348,6 +360,71 @@ def create_app() -> Flask:
             "user": login.user,
             "selected_repo": selected_repo,
         })
+
+    # 저장된 설정은 비밀값이 아닌 등록 여부만 반환
+    @app.get("/api/settings")
+    def settings_status():
+        login = require_login()
+        return jsonify(setting_status(login.user.get("id")))
+
+    @app.put("/api/settings")
+    def save_user_settings():
+        login = require_login()
+        body = request.get_json(silent=True) or {}
+        api_key = str(body.get("openai_api_key") or "").strip()
+        discord = str(body.get("discord_webhook_url") or "").strip()
+        repo = str(login.repo or "").strip()
+        if len(api_key) > 500 or len(discord) > 500:
+            raise ValueError("입력한 설정 값이 너무 깁니다.")
+        if api_key and not api_key.startswith("sk-"):
+            raise ValueError("OpenAI API Key 형식을 확인해 주세요.")
+        if discord:
+            get_user_config({
+                "github_repo": repo or "owner/repo",
+                "github_token": login.token,
+                "openai_api_key": "",
+                "discord_webhook_url": discord,
+            })
+        save_settings(login.user.get("id"), api_key, discord, repo)
+        return jsonify({"ok": True, **setting_status(login.user.get("id"))})
+
+    @app.post("/api/settings/test-openai")
+    def test_openai():
+        login = require_login()
+        saved = get_settings(login.user.get("id"))
+        if not saved["openai_api_key"]:
+            raise ValueError("먼저 OpenAI API Key를 저장해 주세요.")
+        try:
+            response = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {saved['openai_api_key']}"},
+                timeout=15,
+            )
+            if not response.ok:
+                raise ValueError("OpenAI 연결에 실패했습니다. 키와 계정 상태를 확인해 주세요.")
+        except requests.RequestException as exc:
+            app.logger.warning("OpenAI connection test failed: %s", type(exc).__name__)
+            raise RuntimeError("OpenAI 서버에 연결하지 못했습니다.") from exc
+        return jsonify({"ok": True, "message": "OpenAI 연결이 확인되었습니다."})
+
+    @app.post("/api/settings/test-discord")
+    def test_discord():
+        login = require_login()
+        saved = get_settings(login.user.get("id"))
+        if not saved["discord_webhook_url"]:
+            raise ValueError("먼저 Discord Webhook URL을 저장해 주세요.")
+        try:
+            response = requests.post(
+                saved["discord_webhook_url"],
+                json={"content": "IssueFlow AI 연결 테스트입니다.", "allowed_mentions": {"parse": []}},
+                timeout=12,
+            )
+            if not response.ok:
+                raise ValueError("Discord 테스트 메시지 전송에 실패했습니다. Webhook 설정을 확인해 주세요.")
+        except requests.RequestException as exc:
+            app.logger.warning("Discord connection test failed: %s", type(exc).__name__)
+            raise RuntimeError("Discord 서버에 연결하지 못했습니다.") from exc
+        return jsonify({"ok": True, "message": "Discord 테스트 메시지를 전송했습니다."})
 
     # GitHub 계정 전환 안내 정보
     @app.get("/api/auth/account-switch")
@@ -419,6 +496,11 @@ def create_app() -> Flask:
         with login.lock:
             login.repo = repo
             login.installation_id = installation_id
+        saved = get_settings(login.user.get("id"))
+        save_settings(
+            login.user.get("id"), saved["openai_api_key"],
+            saved["discord_webhook_url"], repo,
+        )
 
         return jsonify({
             "ok": True,
@@ -561,19 +643,47 @@ def create_app() -> Flask:
     @app.get("/api/issues")
     def issues():
         service = current_service()
+        login = require_login()
+        recent = get_history(login.user.get("id"), service.cfg.github_repo)
+        by_issue = {}
+        for entry in recent:
+            by_issue.setdefault(entry["issue_number"], entry)
+        items = service.issue_list()
+        for item in items:
+            entry = by_issue.get(item["number"])
+            if entry and entry["analysis_status"] == "complete":
+                item["analysis"] = entry["analysis"]
+                item["analysis_id"] = entry["id"]
+                item["analysis_status"] = entry["github_status"]
+                item["discord_status"] = entry["discord_status"]
 
-        return jsonify({
-            "items": service.issue_list()
-        })
+        return jsonify({"items": items})
 
     # GitHub 이슈 상세 조회
     @app.get("/api/issues/<int:number>")
     def issue_detail(number: int):
         service = current_service()
-
-        return jsonify(
-            service.issue_detail(number)
-        )
+        issue = service.issue_detail(number)
+        login = require_login()
+        entries = get_history(login.user.get("id"), service.cfg.github_repo, number)
+        latest = next((item for item in entries if item["analysis"]), None)
+        if latest:
+            issue["analysis"] = latest["analysis"]
+            issue["analysis_id"] = latest["id"]
+            issue["analysis_status"] = latest["github_status"]
+            issue["discord_status"] = latest["discord_status"]
+            previous = next(
+                (item for item in entries if item["analysis"] and item["id"] != latest["id"]),
+                None,
+            )
+            if previous:
+                fields = ("category", "priority", "probable_cause", "solution", "recommended_labels")
+                issue["analysis_comparison"] = {
+                    key: {"previous": previous["analysis"].get(key), "current": latest["analysis"].get(key)}
+                    for key in fields
+                    if previous["analysis"].get(key) != latest["analysis"].get(key)
+                }
+        return jsonify(issue)
 
     # GPT로 이슈 분석
     @app.post("/api/issues/<int:number>/analyze")
@@ -588,9 +698,126 @@ def create_app() -> Flask:
 
         service = current_service()
 
-        return jsonify(
-            service.run(number, force=force)
+        login = require_login()
+        previous = get_history(login.user.get("id"), service.cfg.github_repo, number)
+        try:
+            result = service.run(number, force=force)
+            history_id = save_analysis(
+                login.user.get("id"), service.cfg.github_repo, number,
+                result["issue"].get("title", ""), result["analysis"], "complete",
+            )
+        except Exception as exc:
+            save_analysis(
+                login.user.get("id"), service.cfg.github_repo, number,
+                "", None, "failed", str(exc),
+            )
+            raise
+        result["history_id"] = history_id
+        old = next((item for item in previous if item.get("analysis")), None)
+        if old:
+            earlier = old["analysis"]
+            result["comparison"] = {
+                key: {"previous": earlier.get(key), "current": result["analysis"].get(key)}
+                for key in ("category", "priority", "probable_cause", "solution", "recommended_labels")
+                if earlier.get(key) != result["analysis"].get(key)
+            }
+        return jsonify(result)
+
+    @app.post("/api/issues/<int:number>/apply")
+    def apply_analysis(number: int):
+        login = require_login()
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        history_id = body.get("history_id")
+        apply_labels = body.get("apply_labels", False)
+        post_comment = body.get("post_comment", False)
+        if not isinstance(history_id, int) or isinstance(history_id, bool):
+            raise ValueError("분석 이력 정보가 올바르지 않습니다.")
+        if not isinstance(apply_labels, bool) or not isinstance(post_comment, bool):
+            raise ValueError("적용 옵션이 올바르지 않습니다.")
+        entry = next(
+            (item for item in get_history(login.user.get("id"), service.cfg.github_repo, number)
+             if item["id"] == history_id),
+            None,
         )
+        if entry is None or not entry["analysis"]:
+            raise LookupError("이 분석 이력에 접근할 수 없습니다.")
+        if entry["github_status"] == "applied":
+            raise ValueError("이 분석 결과는 이미 GitHub에 적용되었습니다.")
+        try:
+            outcome = service.apply(
+                number, entry["analysis"], apply_labels=apply_labels,
+                post_comment=post_comment,
+                send_notification=entry["discord_status"] != "sent",
+            )
+            update_analysis(
+                login.user.get("id"), history_id,
+                github_status=outcome["status"],
+                github_result={
+                    "labels": outcome["labels"] if outcome["labels_applied"] else [],
+                    "comment_applied": outcome["comment_applied"],
+                },
+                discord_status=(
+                    "sent" if outcome["notification_sent"]
+                    else "failed" if outcome["notification_error"]
+                    else entry["discord_status"]
+                ),
+                error="; ".join(outcome["errors"]) or outcome["notification_error"] or "",
+            )
+            outcome["issue"]["analysis_id"] = history_id
+            outcome["issue"]["discord_status"] = (
+                "sent" if outcome["notification_sent"]
+                else "failed" if outcome["notification_error"]
+                else entry["discord_status"]
+            )
+            return jsonify(outcome)
+        except Exception as exc:
+            update_analysis(
+                login.user.get("id"), history_id,
+                github_status="failed", error=str(exc),
+            )
+            raise
+
+    @app.post("/api/analysis-history/<int:history_id>/retry-discord")
+    def retry_discord(history_id: int):
+        login = require_login()
+        service = current_service()
+        entry = next(
+            (item for item in get_history(login.user.get("id"), service.cfg.github_repo)
+             if item["id"] == history_id),
+            None,
+        )
+        if entry is None:
+            raise LookupError("분석 이력을 찾을 수 없습니다.")
+        if entry["github_status"] not in {"applied", "partial"}:
+            raise ValueError("GitHub 반영이 성공한 분석만 알림을 재시도할 수 있습니다.")
+        if entry["discord_status"] == "sent":
+            raise ValueError("이 분석 결과의 Discord 알림은 이미 전송되었습니다.")
+        if not service.cfg.discord_webhook_url:
+            raise ValueError("먼저 Discord Webhook URL을 설정해 주세요.")
+        issue = service._client().get_issue(entry["issue_number"])
+        try:
+            send_discord(service.cfg.discord_webhook_url, issue, entry["analysis"])
+            update_analysis(login.user.get("id"), history_id, discord_status="sent", error="")
+            return jsonify({"ok": True, "message": "Discord 알림을 전송했습니다."})
+        except RuntimeError as exc:
+            update_analysis(login.user.get("id"), history_id, discord_status="failed", error=str(exc))
+            raise
+
+    @app.get("/api/analysis-history")
+    def analysis_history():
+        login = require_login()
+        service = current_service()
+        return jsonify({
+            "items": get_history(login.user.get("id"), service.cfg.github_repo),
+            "statistics": statistics(login.user.get("id"), service.cfg.github_repo),
+        })
+
+    @app.get("/api/issues/<int:number>/analysis-history")
+    def issue_analysis_history(number: int):
+        login = require_login()
+        service = current_service()
+        return jsonify({"items": get_history(login.user.get("id"), service.cfg.github_repo, number)})
 
     # 최근 이슈 활동 조회
     @app.get("/api/activity")
