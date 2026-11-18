@@ -12,6 +12,7 @@ from unittest.mock import patch
 from cryptography.fernet import Fernet
 
 import app as app_module
+from agent import storage
 
 
 class SettingsApiTests(unittest.TestCase):
@@ -56,6 +57,18 @@ class SettingsApiTests(unittest.TestCase):
         self.client.delete_cookie("session")
         response = self.client.get("/api/settings")
         self.assertEqual(response.status_code, 401)
+
+    def test_local_logout_revokes_session_but_preserves_user_settings(self):
+        storage.save_settings(101, "sk-mock-openai-key", "", "test-owner/test-repo")
+        response = self.client.post("/api/auth/logout", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("test-sid", app_module.LOGIN_SESSIONS)
+        self.assertFalse(self.client.get("/api/auth/me").json["authenticated"])
+        self.assertEqual(self.client.get("/api/settings").status_code, 401)
+        self.assertEqual(
+            storage.get_settings(101)["selected_repo"],
+            "test-owner/test-repo",
+        )
 
     def test_flask_serves_frontend_assets_and_vercel_checks_filesystem_first(self):
         home = self.client.get("/")
@@ -114,6 +127,8 @@ class SettingsApiTests(unittest.TestCase):
             response = self.client.post("/api/auth/logout", json={})
         self.assertEqual(response.status_code, 200)
         delete_session.assert_called_once_with("test-sid")
+        self.assertFalse(self.client.get("/api/auth/me").json["authenticated"])
+        self.assertEqual(self.client.get("/api/settings").status_code, 401)
 
     def test_vercel_requires_stable_flask_key_and_sets_secure_cookie(self):
         with patch.dict(os.environ, {
@@ -152,6 +167,31 @@ class SettingsApiTests(unittest.TestCase):
                 "/auth/github/callback?state=mock-state&code=mock-code"
             )
         self.assertEqual(response.status_code, 302)
+        exchange.assert_called_once_with("mock-code", redirect_uri=callback)
+        with self.client.session_transaction() as browser_session:
+            created_sid = browser_session.get("sid")
+        if created_sid:
+            app_module.LOGIN_SESSIONS.pop(created_sid, None)
+
+    def test_relogin_restores_same_users_repository_selection(self):
+        callback = "http://localhost/auth/github/callback"
+        storage.save_settings(303, "sk-mock-user-key", "", "test-owner/test-repo")
+        with patch("app.oauth_redirect_uri", return_value=callback), \
+             patch("app.create_login_url", return_value=("https://github.test/authorize", "state-relogin")), \
+             patch("app.exchange_code", return_value="mock-github-token") as exchange, \
+             patch("app.get_current_user", return_value={"id": 303, "login": "mock-user"}), \
+             patch("app.get_installations", return_value=[{"id": 7}]), \
+             patch("app.get_installation_repositories", return_value=[
+                 {"full_name": "test-owner/test-repo"},
+             ]):
+            self.client.get("/auth/github")
+            response = self.client.get(
+                "/auth/github/callback?state=state-relogin&code=mock-code"
+            )
+            auth = self.client.get("/api/auth/me")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(auth.json["authenticated"])
+        self.assertEqual(auth.json["selected_repo"], "test-owner/test-repo")
         exchange.assert_called_once_with("mock-code", redirect_uri=callback)
         with self.client.session_transaction() as browser_session:
             created_sid = browser_session.get("sid")
