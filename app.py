@@ -804,11 +804,17 @@ def create_app() -> Flask:
         recent = get_history(login.user.get("id"), service.cfg.github_repo)
         by_issue = {}
         for entry in recent:
-            by_issue.setdefault(entry["issue_number"], entry)
+            # Ignore a later failed re-analysis when an earlier valid result exists.
+            if (
+                entry.get("analysis_status") == "complete"
+                and entry.get("analysis")
+                and entry["issue_number"] not in by_issue
+            ):
+                by_issue[entry["issue_number"]] = entry
         items = service.issue_list()
         for item in items:
             entry = by_issue.get(item["number"])
-            if entry and entry["analysis_status"] == "complete":
+            if entry:
                 item["analysis"] = entry["analysis"]
                 item["analysis_id"] = entry["id"]
                 item["analysis_status"] = entry["github_status"]

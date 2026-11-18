@@ -355,7 +355,7 @@ function toast(message, type = 'success') {
 
 // 초기 연결 화면
 function showSetupStep(step) {
-  ['setupLogin', 'setupRepository', 'setupCredentials'].forEach(id => {
+  ['setupLoading', 'setupLogin', 'setupRepository', 'setupCredentials'].forEach(id => {
     const element = $(`#${id}`);
     if (element) element.hidden = id !== step;
   });
@@ -464,6 +464,23 @@ async function checkLogin() {
   $('#selectedRepoName').textContent = '';
   showSetupStep('setupRepository');
   await loadRepositories();
+}
+
+async function retryLoginCheck() {
+  const button = $('#retryAuthCheck');
+  const message = $('#setupLoadingMessage');
+  button.disabled = true;
+  button.hidden = true;
+  message.textContent = '로그인 상태를 다시 확인하고 있습니다.';
+  try {
+    await checkLogin();
+  } catch (error) {
+    message.textContent = '로그인 상태를 확인할 수 없습니다. 연결을 확인한 뒤 다시 시도해 주세요.';
+    button.hidden = false;
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // GitHub App 설치된 저장소 조회
@@ -1742,6 +1759,7 @@ function registerEvents() {
   });
 
   $('#disconnectBtn').addEventListener('click', disconnectWorkspace);
+  $('#retryAuthCheck').addEventListener('click', retryLoginCheck);
 
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') closeDrawer();
@@ -1760,13 +1778,16 @@ async function start() {
   const allowed = ['dashboard', 'issues', 'workflow', 'settings'];
 
   selectView(allowed.includes(hash) ? hash : 'dashboard');
-  showSetupStep('setupLogin');
+  showSetupStep('setupLoading');
 
   try {
     await checkLogin();
   } catch (err) {
     if (!loggingOut) {
-      showSetupStep('setupLogin');
+      $('#setupLoadingMessage').textContent =
+        '로그인 상태를 확인할 수 없습니다. 연결을 확인한 뒤 다시 시도해 주세요.';
+      $('#retryAuthCheck').hidden = false;
+      showSetupStep('setupLoading');
       toast(err.message, 'error');
     }
   }

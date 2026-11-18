@@ -53,9 +53,22 @@ class StorageTests(unittest.TestCase):
             "user-2", "owner/repo", 7, "Other",
             None, "failed", "test error",
         )
-        self.assertEqual(len(storage.history("user-1", "owner/repo")), 1)
+        failed_apply_id = storage.save_analysis(
+            "user-1", "owner/repo", 5, "Apply failed",
+            {"category": "bug"}, "complete",
+        )
+        storage.update_analysis("user-1", failed_apply_id, github_status="failed")
+        partial_apply_id = storage.save_analysis(
+            "user-1", "owner/repo", 6, "Partial apply",
+            {"category": "feature"}, "complete",
+        )
+        storage.update_analysis("user-1", partial_apply_id, github_status="partial")
+        self.assertEqual(len(storage.history("user-1", "owner/repo")), 3)
         self.assertEqual(storage.statistics("user-1", "owner/repo"), {
-            "total": 1, "applied": 1, "pending": 0, "failed": 0,
+            "total": 3, "applied": 1, "pending": 2, "failed": 0,
+        })
+        self.assertEqual(storage.statistics("user-2", "owner/repo"), {
+            "total": 1, "applied": 0, "pending": 0, "failed": 1,
         })
 
     def test_login_session_token_is_encrypted_and_expiry_is_enforced(self):

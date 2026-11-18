@@ -423,7 +423,7 @@ def statistics(user_id: object, repo: str) -> dict:
         row = db.execute("""
             SELECT COUNT(*) AS total,
                 SUM(CASE WHEN github_status = 'applied' THEN 1 ELSE 0 END) AS applied,
-                SUM(CASE WHEN analysis_status = 'complete' AND github_status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN analysis_status = 'complete' AND github_status <> 'applied' THEN 1 ELSE 0 END) AS pending,
                 SUM(CASE WHEN analysis_status = 'failed' THEN 1 ELSE 0 END) AS failed
             FROM analysis_history WHERE user_id = ? AND repository = ?
         """, (_owner(user_id), repo)).fetchone()

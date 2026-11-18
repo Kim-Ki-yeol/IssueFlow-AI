@@ -58,12 +58,18 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_flask_serves_frontend_assets_and_vercel_checks_filesystem_first(self):
+        home = self.client.get("/")
         js = self.client.get("/app.js")
         css = self.client.get("/styles.css")
+        markup = home.get_data(as_text=True)
+        self.assertEqual(home.status_code, 200)
+        self.assertIn('id="setupLoading"', markup)
+        self.assertRegex(markup, r'id="setupLogin"[^>]*hidden')
         self.assertEqual(js.status_code, 200)
         self.assertEqual(css.status_code, 200)
         self.assertIn("javascript", js.mimetype)
         self.assertEqual(css.mimetype, "text/css")
+        home.close()
         js.close()
         css.close()
 
@@ -253,6 +259,45 @@ class SettingsApiTests(unittest.TestCase):
             ("edit-comment", 77, metadata + edited_markdown),
             fake.calls,
         )
+
+    def test_issue_list_keeps_latest_successful_analysis_after_failed_retry(self):
+        class FakeGitHub:
+            def list_issues(self):
+                return [{
+                    "number": number, "title": f"Analyzed {number}", "body": "",
+                    "state": "open", "labels": [], "analysis": None,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "repository": "test-owner/test-repo",
+                } for number in (12, 13, 14)]
+
+        successful = {
+            "id": 4, "issue_number": 12, "analysis_status": "complete",
+            "github_status": "applied", "discord_status": "sent",
+            "analysis": {"category": "bug", "summary": "Stored result"},
+        }
+        failed_retry = {
+            "id": 5, "issue_number": 12, "analysis_status": "failed",
+            "github_status": "pending", "discord_status": "not_sent",
+            "analysis": None,
+        }
+        other_successes = [{
+            "id": number - 11, "issue_number": number, "analysis_status": "complete",
+            "github_status": "pending", "discord_status": "not_sent",
+            "analysis": {"category": "bug", "summary": f"Stored result {number}"},
+        } for number in (13, 14)]
+        with patch(
+            "app.get_installation_repositories",
+            return_value=[{"full_name": "test-owner/test-repo"}],
+        ), patch("agent.service.GitHubClient", return_value=FakeGitHub()), \
+             patch("app.get_history", return_value=[failed_retry, successful, *other_successes]):
+            response = self.client.get("/api/issues")
+        self.assertEqual(response.status_code, 200)
+        items = response.json["items"]
+        self.assertEqual(sum(bool(issue.get("analysis")) for issue in items), 3)
+        issue = next(item for item in items if item["number"] == 12)
+        self.assertEqual(issue["analysis_id"], 4)
+        self.assertEqual(issue["analysis"]["summary"], "Stored result")
+        self.assertEqual(issue["analysis_status"], "applied")
 
     def test_repository_initial_setup_never_overwrites_existing_labels_or_templates(self):
         class Response:

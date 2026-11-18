@@ -30,6 +30,12 @@
     .setup-btn svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8}
     .setup-note{margin:16px 0 0;font-size:12px;line-height:1.7;color:#89938c;text-align:center}
     .setup-error{margin:12px 0 0;color:#b42318;font-size:13px;line-height:1.6}
+    .setup-loading-state{display:flex;flex-direction:column;align-items:center;gap:12px;padding:28px 10px;text-align:center;color:#738078;font-size:13px}
+    .setup-loading-state strong{color:#34433a;font-size:14px}
+    .setup-loading-state p{margin:0;line-height:1.7}
+    .setup-spinner{width:23px;height:23px;border:2px solid #dce9df;border-top-color:#287b55;border-radius:50%;animation:if-setup-spin .8s linear infinite}
+    @keyframes if-setup-spin{to{transform:rotate(360deg)}}
+    @media(prefers-reduced-motion:reduce){.setup-spinner{animation:none}}
     .setup-user{display:flex;align-items:center;gap:12px;padding:12px;background:#f6f8f6;border-radius:10px}
     .setup-user img{width:38px;height:38px;border-radius:50%}
     .setup-user strong{font-size:14px;color:#26352d}
@@ -72,8 +78,17 @@
     <div class="setup-card">
       <div class="setup-brand">if. <span>IssueFlow AI</span></div>
 
+      <section id="setupLoading" class="setup-step" role="status" aria-live="polite">
+        <div class="setup-loading-state">
+          <span class="setup-spinner" aria-hidden="true"></span>
+          <strong>로그인 상태 확인 중</strong>
+          <p id="setupLoadingMessage">안전한 세션을 확인하고 있습니다.</p>
+          <button id="retryAuthCheck" class="setup-btn secondary" type="button" hidden>다시 확인</button>
+        </div>
+      </section>
+
       <!-- 1단계: IssueFlow AI 시작 화면 -->
-      <section id="setupLogin" class="setup-step">
+      <section id="setupLogin" class="setup-step" hidden>
         <div class="welcome-label">AI-POWERED ISSUE MANAGEMENT</div>
         <h1 class="welcome-title">GitHub 이슈 관리,<br><span>IssueFlow AI</span>로 시작하세요.</h1>
         <p class="welcome-description">반복되는 이슈 분류와 우선순위 판단을 AI로 간편하게 처리하세요. GitHub 저장소를 연결하면 이슈 현황부터 분석 결과까지 한곳에서 관리할 수 있습니다.</p>
