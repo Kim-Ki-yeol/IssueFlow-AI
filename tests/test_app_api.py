@@ -69,8 +69,23 @@ class SettingsApiTests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         config = json.loads((root / "vercel.json").read_text(encoding="utf-8"))
-        self.assertEqual(config["routes"][0].get("handle"), "filesystem")
-        self.assertIn("public", config["functions"]["app.py"]["includeFiles"])
+        self.assertNotIn("routes", config)
+        rewrites = {item["source"]: item["destination"] for item in config["rewrites"]}
+        self.assertEqual(rewrites["/app.js"], "/public/app.js")
+        self.assertEqual(rewrites["/styles.css"], "/public/styles.css")
+        self.assertEqual(rewrites["/(.*)"], "/app.py")
+        self.assertNotIn("functions", config)
+        self.assertTrue(any(
+            item["src"] == "app.py" and item["use"] == "@vercel/python"
+            for item in config["builds"]
+        ))
+        self.assertTrue(any(
+            item["src"] == "public/**" and item["use"] == "@vercel/static"
+            for item in config["builds"]
+        ))
+        self.assertTrue((root / "templates" / "index.html").is_file())
+        self.assertTrue((root / "public" / "app.js").is_file())
+        self.assertTrue((root / "public" / "styles.css").is_file())
 
     def test_persistent_session_is_loaded_and_deleted_server_side(self):
         stored = {

@@ -4,20 +4,24 @@
     {
       "src": "app.py",
       "use": "@vercel/python"
-    }
-  ],
-  "functions": {
-    "app.py": {
-      "includeFiles": "{public,templates}/**"
-    }
-  },
-  "routes": [
-    {
-      "handle": "filesystem"
     },
     {
-      "src": "/(.*)",
-      "dest": "app.py"
+      "src": "public/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/app.js",
+      "destination": "/public/app.js"
+    },
+    {
+      "source": "/styles.css",
+      "destination": "/public/styles.css"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/app.py"
     }
   ]
 }
