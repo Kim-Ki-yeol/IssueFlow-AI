@@ -40,8 +40,8 @@ class FakeGitHub:
         assert number == 12
         return dict(self.issue)
 
-    def list_issues(self):
-        return [dict(self.issue)]
+    def list_issues(self, limit=1000):
+        return [dict(self.issue)][:limit]
 
     def apply_labels(self, number, labels, existing):
         self.applied.append((number, labels, existing))
@@ -118,6 +118,50 @@ class ServiceTests(unittest.TestCase):
         c.request = lambda method, path, **kw: calls.append((method, path, kw))
         c.upsert_comment(12, "comment")
         self.assertEqual(calls[0][:2], ("PATCH", "/issues/comments/77"))
+
+    def test_issue_create_update_and_state_use_github_issue_api(self):
+        c = GitHubClient("test-owner/test-repo", "dummy")
+        calls = []
+        response = {**ISSUE, "assignees": []}
+        c.request = lambda method, path, **kw: calls.append((method, path, kw)) or response
+        c.create_issue("New issue", "Description")
+        c.update_issue(12, title="Edited", body="Updated")
+        c.update_issue(12, state="closed")
+        self.assertEqual(calls[0][:2], ("POST", "/issues"))
+        self.assertEqual(calls[1][:2], ("GET", "/issues/12"))
+        self.assertEqual(calls[2][2]["json"], {"title": "Edited", "body": "Updated"})
+        self.assertEqual(calls[4][2]["json"], {"state": "closed", "state_reason": "completed"})
+
+    def test_comments_assignment_and_priority_are_scoped_to_issue(self):
+        c = GitHubClient("test-owner/test-repo", "dummy")
+        calls = []
+        def fake_request(method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return {**ISSUE, "assignees": []} if path == "/issues/12" else {}
+        c.request = fake_request
+        c.create_comment(12, "hello")
+        c.update_comment(99, "updated")
+        c.delete_comment(99)
+        c.set_assignees(12, ["octocat"])
+        c.ensure_labels = lambda labels: None
+        c.set_priority(12, "medium", ["priority:high", "customer"])
+        self.assertEqual(calls[0][:2], ("GET", "/issues/12"))
+        self.assertEqual(calls[1][:2], ("POST", "/issues/12/comments"))
+        self.assertEqual(calls[2][:2], ("PATCH", "/issues/comments/99"))
+        self.assertEqual(calls[3][:2], ("DELETE", "/issues/comments/99"))
+        self.assertEqual(calls[5][2]["json"], {"assignees": ["octocat"]})
+        self.assertEqual(calls[6][2]["json"]["labels"], ["customer", "priority:medium"])
+
+    def test_board_status_replaces_only_board_status_label(self):
+        c = GitHubClient("test-owner/test-repo", "dummy")
+        calls = []
+        c.ensure_labels = lambda labels: None
+        c.request = lambda method, path, **kw: calls.append((method, path, kw))
+        c.apply_labels(12, ["status:in-progress"], ["status:todo", "priority:high", "customer"])
+        self.assertEqual(
+            calls[0][2]["json"]["labels"],
+            ["priority:high", "customer", "status:in-progress"],
+        )
 
 
 if __name__ == "__main__":

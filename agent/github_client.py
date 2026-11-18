@@ -11,6 +11,7 @@ COMMENT_MARKER = "<!-- issueflow-ai:analysis:v1 "
 COLORS = {
     "bug": "ef4444", "enhancement": "8b5cf6", "documentation": "0ea5e9", "question": "6b7280",
     "priority:high": "dc2626", "priority:medium": "f59e0b", "priority:low": "22c55e",
+    "status:todo": "94a3b8", "status:in-progress": "3b82f6", "status:done": "22c55e",
     "ai:processed": "6366f1",
 }
 
@@ -62,12 +63,99 @@ class GitHubClient:
             "updated_at": issue.get("updated_at"),
             "html_url": issue.get("html_url"),
             "repository": repo,
+            "assignees": [
+                person.get("login", "") for person in issue.get("assignees", [])
+            ],
         }
 
-    def list_issues(self) -> list[dict]:
-        # 최근 변경된 열린 이슈 60개만 표시. PR은 제외
-        items = self.request("GET", "/issues", params={"state": "open", "per_page": 60, "sort": "updated", "direction": "desc"})
+    def list_issues(self, limit: int = 1000) -> list[dict]:
+        items = []
+        limit = max(1, min(int(limit), 1000))
+        per_page = min(limit, 100)
+        for page in range(1, (limit + per_page - 1) // per_page + 1):
+            batch = self.request(
+                "GET", "/issues",
+                params={
+                    "state": "all", "per_page": per_page, "page": page,
+                    "sort": "updated", "direction": "desc",
+                },
+            )
+            items.extend(batch[:limit - len(items)])
+            if len(batch) < per_page or len(items) >= limit:
+                break
         return [self.normalize(item, self.repo) for item in items if "pull_request" not in item]
+
+    def create_issue(self, title: str, body: str) -> dict:
+        issue = self.request("POST", "/issues", json={"title": title, "body": body})
+        return self.normalize(issue, self.repo)
+
+    def assert_issue(self, number: int) -> dict:
+        issue = self.request("GET", f"/issues/{number}")
+        if "pull_request" in issue:
+            raise GitHubError("Pull Request는 이슈 관리 대상이 아닙니다.")
+        return issue
+
+    def update_issue(self, number: int, *, title: str | None = None, body: str | None = None,
+                     state: str | None = None) -> dict:
+        self.assert_issue(number)
+        payload = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if state is not None:
+            payload["state"] = state
+            if state == "closed":
+                payload["state_reason"] = "completed"
+        issue = self.request("PATCH", f"/issues/{number}", json=payload)
+        if "pull_request" in issue:
+            raise GitHubError("Pull Request는 이슈 관리 대상이 아닙니다.")
+        return self.normalize(issue, self.repo)
+
+    def list_assignees(self) -> list[dict]:
+        people = []
+        for page in range(1, 11):
+            batch = self.request(
+                "GET", "/assignees", params={"per_page": 100, "page": page}
+            )
+            people.extend(
+                {"login": item.get("login", ""), "avatar_url": item.get("avatar_url", "")}
+                for item in batch if item.get("login")
+            )
+            if len(batch) < 100:
+                break
+        return people
+
+    def set_assignees(self, number: int, assignees: list[str]) -> dict:
+        self.assert_issue(number)
+        issue = self.request(
+            "PATCH", f"/issues/{number}", json={"assignees": assignees}
+        )
+        return self.normalize(issue, self.repo)
+
+    def list_comments(self, number: int) -> list[dict]:
+        self.assert_issue(number)
+        items = self.request(
+            "GET", f"/issues/{number}/comments", params={"per_page": 100}
+        )
+        return [{
+            "id": item["id"],
+            "body": item.get("body") or "",
+            "user": (item.get("user") or {}).get("login", ""),
+            "created_at": item.get("created_at"),
+            "updated_at": item.get("updated_at"),
+            "html_url": item.get("html_url"),
+        } for item in items]
+
+    def create_comment(self, number: int, body: str) -> dict:
+        self.assert_issue(number)
+        return self.request("POST", f"/issues/{number}/comments", json={"body": body})
+
+    def update_comment(self, comment_id: int, body: str) -> dict:
+        return self.request("PATCH", f"/issues/comments/{comment_id}", json={"body": body})
+
+    def delete_comment(self, comment_id: int) -> None:
+        self.request("DELETE", f"/issues/comments/{comment_id}")
 
     def get_issue(self, number: int) -> dict:
         issue = self.request("GET", f"/issues/{number}")
@@ -126,9 +214,27 @@ class GitHubClient:
             label for label in existing
             if label not in labels
             and not (has_new_priority and label.startswith("priority:"))
+            and not (
+                any(item.startswith("status:") for item in labels)
+                and label.startswith("status:")
+            )
         ]
         updated = list(dict.fromkeys(remaining + labels))
         self.request("PUT", f"/issues/{number}/labels", json={"labels": updated})
+
+    def set_priority(self, number: int, priority: str, existing: list[str]) -> None:
+        if priority not in {"high", "medium", "low", "none"}:
+            raise GitHubError("우선순위 값이 올바르지 않습니다.")
+        selected = [] if priority == "none" else [f"priority:{priority}"]
+        self.ensure_labels(selected)
+        remaining = [
+            label for label in existing
+            if not label.startswith("priority:") and label not in selected
+        ]
+        self.request(
+            "PUT", f"/issues/{number}/labels",
+            json={"labels": list(dict.fromkeys(remaining + selected))},
+        )
 
     def upsert_comment(self, number: int, body: str) -> None:
         previous = self.find_analysis_comment(number)

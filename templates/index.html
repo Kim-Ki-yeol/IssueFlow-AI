@@ -21,6 +21,7 @@
     .setup-card label small{color:#8a958d;font-weight:400}
     .setup-card input,.setup-card select,.setup-card textarea{width:100%;box-sizing:border-box;padding:13px;border:1px solid #dce2dc;border-radius:9px;background:#fff;color:#25352b;font:inherit}
     .setup-card input:focus,.setup-card select:focus,.setup-card textarea:focus{outline:2px solid #a9d6be;border-color:#398c63}
+    .setup-card input[type=checkbox]{width:auto;margin-right:7px;vertical-align:middle}
     .setup-btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;margin-top:18px;padding:14px;border:0;border-radius:9px;background:#287b55;color:#fff;font:inherit;font-weight:700;cursor:pointer;text-decoration:none;box-sizing:border-box}
     .setup-btn:hover{background:#216947}
     .setup-btn:disabled{opacity:.6;cursor:wait}
@@ -142,7 +143,10 @@
               <option value="public">Public - 공개</option>
             </select>
 
-            <p class="setup-hint">README 파일을 포함한 저장소를 생성합니다. 생성 후 GitHub App에 저장소 접근 권한을 승인해야 할 수 있습니다.</p>
+            <label><input id="newRepoReadme" type="checkbox" checked> README 초기화</label>
+            <label><input id="newRepoLabels" type="checkbox" checked> 기본 이슈 라벨 생성</label>
+            <label><input id="newRepoTemplates" type="checkbox" checked> 기본 이슈 템플릿 생성</label>
+            <p class="setup-hint">기존 파일이나 라벨은 덮어쓰지 않습니다. 새 저장소에도 GitHub App 접근 권한을 승인해야 할 수 있습니다.</p>
             <button id="createRepoSubmit" class="setup-btn" type="submit">새 저장소 생성하기</button>
           </form>
         </div>
@@ -266,18 +270,54 @@
 
         <section id="viewIssues" class="view">
           <div class="page-intro"><div><span class="eyebrow">ISSUES</span><h1>이슈 관리</h1><p>버그, 기능 요청, 문서 작업을 한 곳에서 살펴봅니다.</p></div><button type="button" class="btn btn-primary" id="newIssueBtn"><svg class="icon"><use href="#i-plus"/></svg> 새 이슈 등록</button></div>
-          <section class="panel all-issues-panel"><div class="list-head"><div><h3>전체 이슈 <span class="inline-count" id="issueCount">0</span></h3><p>이슈를 선택하면 분석 결과와 상세 내용을 확인할 수 있어요.</p></div><div class="list-controls"><label class="search-input"><svg class="icon"><use href="#i-search"/></svg><input id="issueSearch" type="search" placeholder="제목 또는 번호 검색" autocomplete="off" aria-label="이슈 검색"></label><select id="issueFilter" aria-label="이슈 필터"><option value="all">전체</option><option value="pending">분석 대기</option><option value="processed">분석 완료</option><option value="high">우선순위 높음</option></select></div></div><div class="table-wrap"><table class="issues-table full-table"><thead><tr><th>이슈 정보</th><th>분류</th><th>우선순위</th><th>처리 상태</th><th>등록일</th><th></th></tr></thead><tbody id="allIssues"></tbody></table></div><div class="list-footer"><span id="listSummary">0개 이슈 표시</span><button type="button" class="btn btn-outline btn-sm" id="issuesRefresh"><svg class="icon"><use href="#i-refresh"/></svg> 새로고침</button></div></section>
+          <form id="createIssueForm" class="panel issue-create-form" hidden>
+            <div class="panel-head"><div><h3>새 GitHub 이슈</h3><p>제목과 본문을 입력해 실제 선택 저장소에 등록합니다.</p></div></div>
+            <label for="createIssueTitle">제목</label><input id="createIssueTitle" maxlength="256" required>
+            <label for="createIssueBody">본문</label><textarea id="createIssueBody" rows="5" maxlength="65536"></textarea>
+            <div class="focus-actions"><button class="btn btn-primary" type="submit">GitHub에 등록</button><button class="btn btn-outline" id="cancelCreateIssue" type="button">취소</button></div>
+          </form>
+          <section class="panel all-issues-panel">
+            <div class="list-head">
+              <div><h3>전체 이슈 <span class="inline-count" id="issueCount">0</span></h3><p>이슈를 선택하면 상세 내용을 확인할 수 있어요.</p></div>
+              <div class="list-controls">
+                <label class="search-input"><svg class="icon"><use href="#i-search"/></svg><input id="issueSearch" type="search" placeholder="제목 또는 본문 검색" autocomplete="off" aria-label="이슈 검색"></label>
+                <select id="issueStateFilter" aria-label="상태"><option value="all">모든 상태</option><option value="open">Open</option><option value="closed">Closed</option></select>
+                <select id="issueTypeFilter" aria-label="유형"><option value="all">모든 유형</option><option value="bug">Bug</option><option value="feature">Feature</option><option value="documentation">Documentation</option></select>
+                <select id="issuePriorityFilter" aria-label="우선순위"><option value="all">모든 우선순위</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+                <select id="issueAssigneeFilter" aria-label="담당자"><option value="all">모든 담당자</option><option value="unassigned">미지정</option></select>
+                <select id="issueSort" aria-label="정렬"><option value="newest">최신순</option><option value="oldest">오래된순</option></select>
+                <button type="button" class="btn btn-outline btn-sm" id="resetIssueFilters">초기화</button>
+              </div>
+            </div>
+            <div class="issue-view-tools">
+              <div class="view-switch" role="group" aria-label="이슈 보기 전환">
+                <button type="button" class="btn btn-outline btn-sm active" id="listViewBtn">목록 보기</button>
+                <button type="button" class="btn btn-outline btn-sm" id="boardViewBtn">보드 보기</button>
+              </div>
+              <div class="bulk-tools" id="bulkTools" hidden>
+                <span id="selectedIssueCount">0개 선택</span>
+                <select id="bulkAction"><option value="">일괄 작업</option><option value="close">닫기</option><option value="reopen">다시 열기</option><option value="assign">담당자 변경</option><option value="priority">우선순위 변경</option></select>
+                <select id="bulkValue" hidden></select>
+                <button type="button" class="btn btn-primary btn-sm" id="runBulkAction">실행</button>
+              </div>
+            </div>
+            <div id="issueListView"><div class="table-wrap"><table class="issues-table full-table"><thead><tr><th><input type="checkbox" id="selectAllIssues" aria-label="표시된 이슈 전체 선택"></th><th>이슈 정보</th><th>분류</th><th>우선순위</th><th>상태</th><th>담당자</th><th>등록일</th><th></th></tr></thead><tbody id="allIssues"></tbody></table></div></div>
+            <div id="issueBoardView" class="kanban-columns" hidden></div>
+            <div class="list-footer"><span id="listSummary">0개 이슈 표시</span><button type="button" class="btn btn-outline btn-sm" id="issuesRefresh"><svg class="icon"><use href="#i-refresh"/></svg> 새로고침</button></div>
+          </section>
         </section>
 
         <section id="viewWorkflow" class="view">
-          <div class="page-intro"><div><span class="eyebrow">AUTOMATION</span><h1>자동화 흐름</h1><p>새 이슈가 등록된 뒤 어떤 작업이 실행되는지 정리했습니다.</p></div></div>
-          <div class="workflow-intro"><span class="small-overline">HOW IT WORKS</span><h2>이슈 등록부터 알림까지,<br>다섯 단계로 이어집니다.</h2><p>GitHub Actions에서 Python 프로그램을 실행하고, 분석 결과를 다시 이슈에 반영합니다.</p></div>
+          <div class="page-intro"><div><span class="eyebrow">APPROVED WORKFLOW</span><h1>수동 분석 및 승인 흐름</h1><p>분석과 GitHub 변경은 사용자가 각각 실행하고 승인합니다.</p></div></div>
+          <div class="workflow-intro"><span class="small-overline">HOW IT WORKS</span><h2>사용자가 확인하고 승인하는<br>7단계 작업 흐름</h2><p>새 이슈만으로 GPT 분석이나 GitHub 변경이 자동 실행되지 않습니다.</p></div>
           <div class="steps-grid">
-            <article class="step-card"><span class="step-num">01</span><div class="step-icon"><svg class="icon"><use href="#i-github"/></svg></div><div><h3>새 이슈 등록</h3><p>GitHub Issues에 버그, 기능 요청 등이 등록됩니다.</p><small class="step-tech">GitHub Issues</small></div></article>
-            <article class="step-card"><span class="step-num">02</span><div class="step-icon"><svg class="icon"><use href="#i-zap"/></svg></div><div><h3>워크플로우 실행</h3><p>등록 이벤트를 받아 Python 프로그램을 실행합니다.</p><small class="step-tech">GitHub Actions</small></div></article>
-            <article class="step-card"><span class="step-num">03</span><div class="step-icon"><svg class="icon"><use href="#i-spark"/></svg></div><div><h3>이슈 분석</h3><p>유형, 우선순위, 확인할 항목을 정리합니다.</p><small class="step-tech">OpenAI GPT / LangChain</small></div></article>
-            <article class="step-card"><span class="step-num">04</span><div class="step-icon"><svg class="icon"><use href="#i-check"/></svg></div><div><h3>GitHub 반영</h3><p>허용된 라벨을 붙이고 분석 댓글을 작성합니다.</p><small class="step-tech">GitHub REST API</small></div></article>
-            <article class="step-card"><span class="step-num">05</span><div class="step-icon"><svg class="icon"><use href="#i-bell"/></svg></div><div><h3>알림 전송</h3><p>원하는 경우 분석 결과를 Discord로 보냅니다.</p><small class="step-tech">Discord Webhook</small></div></article>
+            <article class="step-card"><span class="step-num">01</span><div class="step-icon"><svg class="icon"><use href="#i-github"/></svg></div><div><h3>이슈 등록 또는 선택</h3><p>저장소에 새 이슈를 등록하거나 기존 이슈를 선택합니다.</p><small class="step-tech">GitHub Issues</small></div></article>
+            <article class="step-card"><span class="step-num">02</span><div class="step-icon"><svg class="icon"><use href="#i-spark"/></svg></div><div><h3>사용자가 AI 분석 실행</h3><p>분석 버튼을 누른 경우에만 GPT 요청이 시작됩니다.</p><small class="step-tech">OpenAI GPT</small></div></article>
+            <article class="step-card"><span class="step-num">03</span><div class="step-icon"><svg class="icon"><use href="#i-check"/></svg></div><div><h3>분석 결과 확인</h3><p>유형, 우선순위, 요약, 원인과 해결 방향을 확인합니다.</p><small class="step-tech">분석 이력 저장</small></div></article>
+            <article class="step-card"><span class="step-num">04</span><div class="step-icon"><svg class="icon"><use href="#i-list"/></svg></div><div><h3>반영 항목 선택</h3><p>추천 라벨과 분석 댓글을 각각 선택할 수 있습니다.</p><small class="step-tech">사용자 선택</small></div></article>
+            <article class="step-card"><span class="step-num">05</span><div class="step-icon"><svg class="icon"><use href="#i-check"/></svg></div><div><h3>GitHub 반영 승인</h3><p>확인 절차 후 선택된 변경만 실제 이슈에 적용합니다.</p><small class="step-tech">GitHub REST API</small></div></article>
+            <article class="step-card"><span class="step-num">06</span><div class="step-icon"><svg class="icon"><use href="#i-github"/></svg></div><div><h3>적용 결과 확인</h3><p>성공·부분 성공·실패를 확인하고 가능한 작업은 재시도합니다.</p><small class="step-tech">라벨 및 댓글</small></div></article>
+            <article class="step-card"><span class="step-num">07</span><div class="step-icon"><svg class="icon"><use href="#i-bell"/></svg></div><div><h3>Discord 알림 전송</h3><p>승인된 GitHub 반영이 성공한 경우에만 알림을 전송합니다.</p><small class="step-tech">Discord Webhook</small></div></article>
           </div>
           <div class="workflow-note"><svg class="icon"><use href="#i-circle"/></svg><div><strong>실제 코드 수정은 하지 않습니다.</strong><p>이 에이전트는 분류와 점검 방법을 제안합니다. 이슈 본문에 있는 명령은 실행하지 않으며, GitHub에 적용할 라벨도 미리 정한 목록으로 제한합니다.</p></div></div>
         </section>
@@ -306,7 +346,7 @@
                 <div><span class="guide-index">01</span><div><strong>GitHub 로그인</strong><p>GitHub 계정으로 로그인하고 저장소 접근을 승인합니다.</p></div></div>
                 <div><span class="guide-index">02</span><div><strong>저장소 선택</strong><p>기존 저장소를 선택하거나 새 저장소를 생성합니다.</p></div></div>
                 <div><span class="guide-index">03</span><div><strong>AI 분석</strong><p>OpenAI API 키를 연결하고 이슈 분석을 실행합니다.</p></div></div>
-                <div><span class="guide-index">04</span><div><strong>자동화 설정</strong><p>GitHub Actions 자동 분석을 사용하려면 저장소별 추가 설정이 필요합니다.</p></div></div>
+                <div><span class="guide-index">04</span><div><strong>수동 분석 및 승인</strong><p>이슈 상세에서 분석을 직접 실행하고, 라벨·댓글을 선택해 승인합니다. 새 이슈만으로 분석은 실행되지 않습니다.</p></div></div>
               </div>
             </section>
           </div>

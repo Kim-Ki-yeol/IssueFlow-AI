@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hmac
+import base64
 import os
 import re
 import requests
@@ -13,7 +14,7 @@ import time
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from flask import (
     Flask,
@@ -516,6 +517,9 @@ def create_app() -> Flask:
         name = str(body.get("name") or "").strip()
         description = str(body.get("description") or "").strip()
         private = body.get("private", True)
+        initialize_readme = body.get("initialize_readme", True)
+        initialize_labels = body.get("initialize_labels", False)
+        initialize_templates = body.get("initialize_templates", False)
 
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", name):
             raise ValueError(
@@ -531,6 +535,12 @@ def create_app() -> Flask:
             raise ValueError(
                 "공개 범위가 올바르지 않습니다."
             )
+        if any(not isinstance(value, bool) for value in (
+            initialize_readme, initialize_labels, initialize_templates
+        )):
+            raise ValueError("저장소 초기 설정 옵션이 올바르지 않습니다.")
+        if initialize_templates and not initialize_readme:
+            raise ValueError("템플릿 파일을 추가하려면 README 초기화(첫 커밋)가 필요합니다.")
 
         try:
             response = requests.post(
@@ -545,7 +555,7 @@ def create_app() -> Flask:
                     "name": name,
                     "description": description,
                     "private": private,
-                    "auto_init": True,
+                    "auto_init": initialize_readme,
                     "has_issues": True,
                 },
                 timeout=20,
@@ -585,12 +595,81 @@ def create_app() -> Flask:
             )
 
         repo = response.json()
+        initialization = {"errors": [], "readme": initialize_readme, "labels": [], "templates": []}
+        headers = {
+            "Authorization": f"Bearer {login.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "IssueFlow-AI",
+        }
+
+        def setup_request(method: str, path: str, **kwargs):
+            try:
+                return requests.request(
+                    method, f"https://api.github.com/repos/{repo['full_name']}{path}",
+                    headers=headers, timeout=20, **kwargs,
+                )
+            except requests.RequestException as exc:
+                app.logger.warning("GitHub initial setup failed: %s", type(exc).__name__)
+                return None
+
+        if initialize_labels:
+            labels = [
+                ("bug", "ef4444"), ("enhancement", "8b5cf6"),
+                ("documentation", "0ea5e9"), ("priority:high", "dc2626"),
+                ("priority:medium", "f59e0b"), ("priority:low", "22c55e"),
+                ("status:todo", "94a3b8"), ("status:in-progress", "3b82f6"),
+                ("status:done", "22c55e"),
+            ]
+            for label_name, color in labels:
+                exists = setup_request("GET", f"/labels/{quote(label_name, safe='')}")
+                if exists is not None and exists.status_code == 200:
+                    continue
+                if exists is None or exists.status_code != 404:
+                    initialization["errors"].append(f"라벨 확인 실패: {label_name}")
+                    continue
+                created = setup_request("POST", "/labels", json={"name": label_name, "color": color})
+                if created is not None and created.status_code == 201:
+                    initialization["labels"].append(label_name)
+                else:
+                    initialization["errors"].append(f"라벨 생성 실패: {label_name}")
+
+        if initialize_templates:
+            templates = {
+                ".github/ISSUE_TEMPLATE/bug_report.md": (
+                    "---\nname: Bug report\nabout: Report a reproducible problem\n"
+                    "title: '[Bug] '\nlabels: bug\n---\n\n"
+                    "## 문제 설명\n\n## 재현 단계\n\n## 기대한 결과\n\n## 실제 결과\n"
+                ),
+                ".github/ISSUE_TEMPLATE/feature_request.md": (
+                    "---\nname: Feature request\nabout: Suggest an improvement\n"
+                    "title: '[Feature] '\nlabels: enhancement\n---\n\n"
+                    "## 해결하려는 문제\n\n## 제안하는 해결 방법\n\n## 추가 정보\n"
+                ),
+            }
+            for file_path, content in templates.items():
+                encoded_path = quote(file_path, safe="/")
+                existing = setup_request("GET", f"/contents/{encoded_path}")
+                if existing is not None and existing.status_code == 200:
+                    continue
+                if existing is None or existing.status_code != 404:
+                    initialization["errors"].append(f"템플릿 확인 실패: {file_path}")
+                    continue
+                created = setup_request("PUT", f"/contents/{encoded_path}", json={
+                    "message": "Add default IssueFlow issue template",
+                    "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                })
+                if created is not None and created.status_code == 201:
+                    initialization["templates"].append(file_path)
+                else:
+                    initialization["errors"].append(f"템플릿 생성 실패: {file_path}")
 
         return jsonify({
             "ok": True,
             "repo": repo["full_name"],
             "html_url": repo["html_url"],
             "requires_installation": True,
+            "initialization": initialization,
         }), 201
 
     # GitHub 로그아웃
@@ -684,6 +763,156 @@ def create_app() -> Flask:
                     if previous["analysis"].get(key) != latest["analysis"].get(key)
                 }
         return jsonify(issue)
+
+    @app.post("/api/issues")
+    def create_issue():
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        title = str(body.get("title") or "").strip()
+        description = str(body.get("body") or "")
+        if not title or len(title) > 256:
+            raise ValueError("이슈 제목은 1~256자로 입력해 주세요.")
+        if len(description) > 65536:
+            raise ValueError("이슈 본문이 너무 깁니다.")
+        return jsonify({"item": service.create_issue(title, description)}), 201
+
+    @app.patch("/api/issues/<int:number>")
+    def update_issue(number: int):
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        changes = {}
+        if "title" in body:
+            title = str(body.get("title") or "").strip()
+            if not title or len(title) > 256:
+                raise ValueError("이슈 제목은 1~256자로 입력해 주세요.")
+            changes["title"] = title
+        if "body" in body:
+            description = str(body.get("body") or "")
+            if len(description) > 65536:
+                raise ValueError("이슈 본문이 너무 깁니다.")
+            changes["body"] = description
+        if not changes:
+            raise ValueError("수정할 제목 또는 본문을 입력해 주세요.")
+        return jsonify({"item": service.update_issue(number, **changes)})
+
+    @app.post("/api/issues/<int:number>/state")
+    def set_issue_state(number: int):
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        value = body.get("state")
+        if not isinstance(value, str) or value not in {"open", "closed"}:
+            raise ValueError("이슈 상태는 open 또는 closed여야 합니다.")
+        return jsonify({"item": service.update_issue(number, state=value)})
+
+    @app.get("/api/assignees")
+    def assignees():
+        service = current_service()
+        return jsonify({"items": service.list_assignees()})
+
+    @app.put("/api/issues/<int:number>/assignees")
+    def set_issue_assignees(number: int):
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        values = body.get("assignees")
+        if not isinstance(values, list) or len(values) > 10:
+            raise ValueError("담당자는 최대 10명까지 선택할 수 있습니다.")
+        names = list(dict.fromkeys(
+            str(value).strip() for value in values
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9-]{1,39}", value.strip())
+        ))
+        if len(names) != len(values):
+            raise ValueError("담당자 목록에 올바르지 않은 값이 있습니다.")
+        available = {item["login"] for item in service.list_assignees()}
+        if not set(names).issubset(available):
+            raise ValueError("이 저장소에 접근 가능한 담당자만 지정할 수 있습니다.")
+        return jsonify({"item": service.set_assignees(number, names)})
+
+    @app.put("/api/issues/<int:number>/priority")
+    def set_issue_priority(number: int):
+        service = current_service()
+        value = (request.get_json(silent=True) or {}).get("priority")
+        if not isinstance(value, str) or value not in {"high", "medium", "low", "none"}:
+            raise ValueError("우선순위 값이 올바르지 않습니다.")
+        return jsonify({"item": service.set_priority(number, value)})
+
+    @app.put("/api/issues/<int:number>/board-status")
+    def set_board_status(number: int):
+        service = current_service()
+        value = (request.get_json(silent=True) or {}).get("status")
+        return jsonify({"item": service.set_board_status(number, value)})
+
+    @app.get("/api/issues/<int:number>/comments")
+    def list_issue_comments(number: int):
+        service = current_service()
+        return jsonify({"items": service.list_comments(number)})
+
+    @app.post("/api/issues/<int:number>/comments")
+    def create_issue_comment(number: int):
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        text = str(body.get("body") or "").strip()
+        if not text or len(text) > 65536:
+            raise ValueError("댓글은 1~65,536자로 입력해 주세요.")
+        return jsonify({"item": service.create_comment(number, text)}), 201
+
+    def verify_issue_comment(service: Service, number: int, comment_id: int) -> None:
+        if not any(item["id"] == comment_id for item in service.list_comments(number)):
+            raise LookupError("해당 이슈의 댓글을 찾을 수 없습니다.")
+
+    @app.patch("/api/issues/<int:number>/comments/<int:comment_id>")
+    def update_issue_comment(number: int, comment_id: int):
+        service = current_service()
+        verify_issue_comment(service, number, comment_id)
+        text = str((request.get_json(silent=True) or {}).get("body") or "").strip()
+        if not text or len(text) > 65536:
+            raise ValueError("댓글은 1~65,536자로 입력해 주세요.")
+        return jsonify({"item": service.update_comment(comment_id, text)})
+
+    @app.delete("/api/issues/<int:number>/comments/<int:comment_id>")
+    def delete_issue_comment(number: int, comment_id: int):
+        service = current_service()
+        verify_issue_comment(service, number, comment_id)
+        service.delete_comment(comment_id)
+        return jsonify({"ok": True})
+
+    @app.post("/api/issues/bulk")
+    def bulk_issue_action():
+        service = current_service()
+        body = request.get_json(silent=True) or {}
+        numbers = body.get("numbers")
+        action = body.get("action")
+        if not isinstance(numbers, list) or not 1 <= len(numbers) <= 50:
+            raise ValueError("일괄 작업은 1~50개 이슈를 선택해 주세요.")
+        if any(not isinstance(n, int) or isinstance(n, bool) or n < 1 for n in numbers):
+            raise ValueError("이슈 번호 목록이 올바르지 않습니다.")
+        numbers = list(dict.fromkeys(numbers))
+        results = []
+        for number in numbers:
+            try:
+                if action == "close":
+                    service.update_issue(number, state="closed")
+                elif action == "reopen":
+                    service.update_issue(number, state="open")
+                elif action == "assign":
+                    assignees = body.get("assignees")
+                    if not isinstance(assignees, list):
+                        raise ValueError("담당자를 선택해 주세요.")
+                    service.set_assignees(number, assignees)
+                elif action == "priority":
+                    service.set_priority(number, body.get("priority", ""))
+                else:
+                    raise ValueError("지원하지 않는 일괄 작업입니다.")
+                results.append({"number": number, "ok": True})
+            except Exception as exc:
+                results.append({
+                    "number": number, "ok": False,
+                    "error": str(exc)[:240],
+                })
+        return jsonify({
+            "items": results,
+            "succeeded": sum(1 for item in results if item["ok"]),
+            "failed": sum(1 for item in results if not item["ok"]),
+        })
 
     # GPT로 이슈 분석
     @app.post("/api/issues/<int:number>/analyze")

@@ -27,6 +27,49 @@ class Service:
     def issue_detail(self, number: int) -> dict:
         return self._client().get_issue(number)
 
+    def create_issue(self, title: str, body: str) -> dict:
+        return self._client().create_issue(title, body)
+
+    def update_issue(self, number: int, **changes) -> dict:
+        return self._client().update_issue(number, **changes)
+
+    def list_assignees(self) -> list[dict]:
+        return self._client().list_assignees()
+
+    def set_assignees(self, number: int, assignees: list[str]) -> dict:
+        return self._client().set_assignees(number, assignees)
+
+    def list_comments(self, number: int) -> list[dict]:
+        return self._client().list_comments(number)
+
+    def create_comment(self, number: int, body: str) -> dict:
+        return self._client().create_comment(number, body)
+
+    def update_comment(self, comment_id: int, body: str) -> dict:
+        return self._client().update_comment(comment_id, body)
+
+    def delete_comment(self, comment_id: int) -> None:
+        self._client().delete_comment(comment_id)
+
+    def set_priority(self, number: int, priority: str) -> dict:
+        if not isinstance(priority, str) or priority not in {"high", "medium", "low", "none"}:
+            raise ValueError("우선순위 값이 올바르지 않습니다.")
+        issue = self._client().get_issue(number)
+        self._client().set_priority(number, priority, issue["labels"])
+        return self._client().get_issue(number)
+
+    def set_board_status(self, number: int, status: str) -> dict:
+        labels = {
+            "todo": "status:todo",
+            "in_progress": "status:in-progress",
+            "done": "status:done",
+        }
+        if not isinstance(status, str) or status not in labels:
+            raise ValueError("칸반 상태 값이 올바르지 않습니다.")
+        issue = self._client().get_issue(number)
+        self._client().apply_labels(number, [labels[status]], issue["labels"])
+        return self._client().get_issue(number)
+
     def activity(self) -> list[dict]:
         # 저장 DB 없이 GitHub 이슈의 최근 업데이트 내역을 보여줌
         return [{
@@ -35,7 +78,7 @@ class Service:
             "detail": item["title"],
             "kind": "updated",
             "created_at": item.get("updated_at") or item.get("created_at"),
-        } for item in self.issue_list()[:8]]
+        } for item in self._client().list_issues(limit=8)]
 
     @staticmethod
     def comment(analysis: dict) -> str:

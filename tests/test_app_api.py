@@ -25,6 +25,8 @@ class SettingsApiTests(unittest.TestCase):
             token="non-production-test-token",
             user={"id": 101, "login": "user-one"},
             expires_at=9999999999,
+            repo="test-owner/test-repo",
+            installation_id=5,
         )
         with self.client.session_transaction() as browser_session:
             browser_session["sid"] = "test-sid"
@@ -50,6 +52,80 @@ class SettingsApiTests(unittest.TestCase):
         self.client.delete_cookie("session")
         response = self.client.get("/api/settings")
         self.assertEqual(response.status_code, 401)
+
+    def test_issue_crud_and_comments_routes_use_mocked_github_client(self):
+        class FakeGitHub:
+            def __init__(self):
+                self.calls = []
+
+            def create_issue(self, title, body):
+                self.calls.append(("create", title, body))
+                return {"number": 8, "title": title, "body": body}
+
+            def update_issue(self, number, **changes):
+                self.calls.append(("update", number, changes))
+                return {"number": number, **changes}
+
+            def list_comments(self, number):
+                self.calls.append(("comments", number))
+                return [{"id": 77, "body": "old"}]
+
+            def create_comment(self, number, body):
+                self.calls.append(("comment", number, body))
+                return {"id": 78, "body": body}
+
+            def update_comment(self, comment_id, body):
+                self.calls.append(("edit-comment", comment_id, body))
+                return {"id": comment_id, "body": body}
+
+            def delete_comment(self, comment_id):
+                self.calls.append(("delete-comment", comment_id))
+
+        fake = FakeGitHub()
+        with patch(
+            "app.get_installation_repositories",
+            return_value=[{"full_name": "test-owner/test-repo"}],
+        ), patch("agent.service.GitHubClient", return_value=fake):
+            created = self.client.post("/api/issues", json={"title": "Test", "body": "Body"})
+            edited = self.client.patch("/api/issues/8", json={"title": "Updated"})
+            comment = self.client.post("/api/issues/8/comments", json={"body": "Hello"})
+            deleted = self.client.delete("/api/issues/8/comments/77", json={})
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(edited.status_code, 200)
+        self.assertEqual(comment.status_code, 201)
+        self.assertEqual(deleted.status_code, 200)
+        self.assertIn(("create", "Test", "Body"), fake.calls)
+        self.assertIn(("update", 8, {"title": "Updated"}), fake.calls)
+        self.assertIn(("delete-comment", 77), fake.calls)
+
+    def test_repository_initial_setup_never_overwrites_existing_labels_or_templates(self):
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "full_name": "user-one/new-repo",
+                    "html_url": "https://github.com/user-one/new-repo",
+                }
+
+        class Created(Response):
+            status_code = 201
+
+        with patch("app.requests.post", return_value=Created()) as create_request, \
+             patch("app.requests.request", return_value=Response()) as setup_request:
+            response = self.client.post("/api/github/repositories", json={
+                "name": "new-repo",
+                "private": True,
+                "initialize_readme": True,
+                "initialize_labels": True,
+                "initialize_templates": True,
+            })
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(create_request.call_args.kwargs["json"]["auto_init"])
+        self.assertTrue(all(call.args[0] == "GET" for call in setup_request.call_args_list))
+        self.assertEqual(response.json["initialization"]["errors"], [])
 
 
 if __name__ == "__main__":

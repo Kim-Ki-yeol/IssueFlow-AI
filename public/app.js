@@ -6,7 +6,8 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 
 const state = {
   config: null, issues: [], activity: [], selected: null,
-  busy: false, view: 'dashboard', repositories: [],
+  busy: false, view: 'dashboard', repositories: [], assignees: [],
+  selectedIssues: new Set(), issueDisplay: 'list',
   selectedRepo: '', analysisHistoryId: null,
   connected: false
 };
@@ -67,10 +68,11 @@ function category(issue) {
 }
 
 function priority(issue) {
-  if (issue.analysis?.priority) return issue.analysis.priority;
   const label = (issue.labels || []).find(v => v.startsWith('priority:'));
   const value = label ? label.split(':')[1] : 'none';
-  return ['high', 'medium', 'low'].includes(value) ? value : 'none';
+  if (['high', 'medium', 'low'].includes(value)) return value;
+  return ['high', 'medium', 'low'].includes(issue.analysis?.priority)
+    ? issue.analysis.priority : 'none';
 }
 
 function processed(issue) {
@@ -165,6 +167,7 @@ function resetWorkspace() {
   Object.assign(state, {
     config: null, issues: [], activity: [], selected: null,
     busy: false, view: 'dashboard', repositories: [],
+    assignees: [], selectedIssues: new Set(), issueDisplay: 'list',
     selectedRepo: '', analysisHistoryId: null,
     connected: false
   });
@@ -175,7 +178,9 @@ function resetWorkspace() {
   $('#repoSetupError').textContent = '';
   $('#setupRepoSearch').value = '';
   $('#issueSearch').value = '';
-  $('#issueFilter').value = 'all';
+  ['issueStateFilter', 'issueTypeFilter', 'issuePriorityFilter', 'issueAssigneeFilter']
+    .forEach(id => { if ($(`#${id}`)) $(`#${id}`).value = 'all'; });
+  $('#issueSort').value = 'newest';
 
   closeDrawer();
   renderIssues();
@@ -366,13 +371,21 @@ async function createRepository(event) {
   try {
     const result = await api('/api/github/repositories', {
       method: 'POST',
-      body: JSON.stringify({ name, description, private: isPrivate }),
+      body: JSON.stringify({
+        name, description, private: isPrivate,
+        initialize_readme: $('#newRepoReadme').checked,
+        initialize_labels: $('#newRepoLabels').checked,
+        initialize_templates: $('#newRepoTemplates').checked
+      }),
       timeoutMs: 45000
     });
 
     if (loggingOut || id !== connectionId) return;
 
     toast(`${result.repo} 저장소가 생성되었습니다.`);
+    if (result.initialization?.errors?.length) {
+      window.alert(`저장소는 생성됐지만 초기 설정 일부에 실패했습니다.\n${result.initialization.errors.join('\n')}`);
+    }
     showRepositoryTab('select');
     await loadRepositories();
 
@@ -441,17 +454,20 @@ async function connectWorkspace(event) {
 }
 
 async function activateWorkspace() {
-  const [config, issues, activity, analysis] = await Promise.all([
-    api('/api/config'), api('/api/issues'), api('/api/activity'), api('/api/analysis-history')
+  const [config, issues, activity, analysis, assignees] = await Promise.all([
+    api('/api/config'), api('/api/issues'), api('/api/activity'),
+    api('/api/analysis-history'), api('/api/assignees').catch(() => ({ items: [] }))
   ]);
   state.config = config;
   state.issues = issues.items || [];
   state.activity = activity.items || [];
+  state.assignees = assignees.items || [];
   state.connected = true;
   state.selectedRepo = config.repo;
 
   renderConfig();
   renderIssues();
+  renderAssigneeFilters();
   renderActivity();
   renderAnalysisStats(analysis.statistics);
 
@@ -568,18 +584,19 @@ function issueRow(issue, full = false) {
   const number = Number(issue.number);
   const type = category(issue);
   const level = priority(issue);
-  const done = processed(issue);
+  const assigned = (issue.assignees || []).map(escapeHtml).join(', ') || '미지정';
 
   return `
     <tr class="issue-row" data-issue="${number}" tabindex="0">
+      ${full ? `<td><input type="checkbox" class="issue-select" data-issue-select="${number}" aria-label="이슈 #${number} 선택" ${state.selectedIssues.has(number) ? 'checked' : ''}></td>` : ''}
       <td>
         <span class="issue-name" title="${name}">${name}</span>
         <span class="issue-id">#${number} · ${escapeHtml(issue.repository || '')}</span>
       </td>
       <td><span class="badge ${type}">${categoryLabel[type] || '미분류'}</span></td>
       <td><span class="badge ${level}">${priorityLabel[level] || '미정'}</span></td>
-      <td><span class="status ${done ? 'done' : 'pending'}">${done ? '분석 완료' : '대기 중'}</span></td>
-      ${full ? `<td>${escapeHtml(miniDate(issue.created_at))}</td>` : ''}
+      <td><span class="status ${issue.state === 'closed' ? 'done' : 'pending'}">${issue.state === 'closed' ? 'Closed' : 'Open'}</span></td>
+      ${full ? `<td>${assigned}</td><td>${escapeHtml(miniDate(issue.created_at))}</td>` : ''}
       <td>${icon('i-arrow', 'icon row-chevron')}</td>
     </tr>
   `;
@@ -617,24 +634,40 @@ function renderIssues() {
     : '<tr><td colspan="5" class="empty-cell">표시할 이슈가 없습니다.</td></tr>';
 
   const query = $('#issueSearch').value.trim().toLowerCase();
-  const filter = $('#issueFilter').value;
+  const stateFilter = $('#issueStateFilter').value;
+  const typeFilter = $('#issueTypeFilter').value;
+  const priorityFilter = $('#issuePriorityFilter').value;
+  const assigneeFilter = $('#issueAssigneeFilter').value;
 
   const visible = state.issues.filter(issue => {
     const matchesSearch = !query ||
       String(issue.title || '').toLowerCase().includes(query) ||
-      String(issue.number).includes(query);
-
-    const matchesFilter = filter === 'all' ||
-      (filter === 'pending' && !processed(issue)) ||
-      (filter === 'processed' && processed(issue)) ||
-      (filter === 'high' && priority(issue) === 'high');
-
-    return matchesSearch && matchesFilter;
+      String(issue.body || '').toLowerCase().includes(query);
+    const assigned = issue.assignees || [];
+    return matchesSearch
+      && (stateFilter === 'all' || issue.state === stateFilter)
+      && (typeFilter === 'all' || category(issue) === typeFilter)
+      && (priorityFilter === 'all' || priority(issue) === priorityFilter)
+      && (assigneeFilter === 'all'
+        || (assigneeFilter === 'unassigned' && !assigned.length)
+        || assigned.includes(assigneeFilter));
+  }).sort((a, b) => {
+    const delta = new Date(a.created_at || 0) - new Date(b.created_at || 0);
+    return $('#issueSort').value === 'oldest' ? delta : -delta;
   });
 
   $('#allIssues').innerHTML = visible.length
     ? visible.map(issue => issueRow(issue, true)).join('')
-    : '<tr><td colspan="6" class="empty-cell">검색 조건에 맞는 이슈가 없습니다.</td></tr>';
+    : '<tr><td colspan="8" class="empty-cell">검색 조건에 맞는 이슈가 없습니다.</td></tr>';
+
+  $('#issueBoardView').innerHTML = renderBoard(visible);
+  $('#issueListView').hidden = state.issueDisplay !== 'list';
+  $('#issueBoardView').hidden = state.issueDisplay !== 'board';
+  $('#listViewBtn').classList.toggle('active', state.issueDisplay === 'list');
+  $('#boardViewBtn').classList.toggle('active', state.issueDisplay === 'board');
+  $('#selectAllIssues').checked = visible.length > 0
+    && visible.every(issue => state.selectedIssues.has(issue.number));
+  renderBulkTools();
 
   $('#listSummary').textContent =
     `총 ${state.issues.length}개 중 ${visible.length}개 표시`;
@@ -646,6 +679,119 @@ function renderIssues() {
       if (event.key === 'Enter') openDrawer(number);
     });
   });
+  $$('.issue-select').forEach(box => box.addEventListener('click', event => event.stopPropagation()));
+  $$('.issue-select').forEach(box => box.addEventListener('change', () => {
+    const number = Number(box.dataset.issueSelect);
+    if (box.checked) state.selectedIssues.add(number);
+    else state.selectedIssues.delete(number);
+    renderBulkTools();
+  }));
+  $$('[data-board-status]').forEach(select => select.addEventListener('change', () => {
+    changeBoardStatus(Number(select.dataset.issue), select.value);
+  }));
+  $$('[data-open-issue]').forEach(button => button.addEventListener('click', () => {
+    openDrawer(Number(button.dataset.openIssue));
+  }));
+}
+
+function renderAssigneeFilters() {
+  const select = $('#issueAssigneeFilter');
+  select.innerHTML = '<option value="all">모든 담당자</option><option value="unassigned">미지정</option>'
+    + state.assignees.map(person =>
+      `<option value="${escapeHtml(person.login)}">${escapeHtml(person.login)}</option>`
+    ).join('');
+}
+
+function boardStatus(issue) {
+  const labels = issue.labels || [];
+  if (labels.includes('status:in-progress')) return 'in_progress';
+  if (labels.includes('status:done')) return 'done';
+  if (labels.includes('status:todo')) return 'todo';
+  if (issue.state === 'closed') return 'done';
+  return 'todo';
+}
+
+function renderBoard(issues) {
+  const columns = [
+    ['todo', 'To Do'], ['in_progress', 'In Progress'], ['done', 'Done']
+  ];
+  return columns.map(([status, title]) => {
+    const cards = issues.filter(issue => boardStatus(issue) === status);
+    return `<section class="kanban-column"><div class="kanban-head"><strong>${title}</strong><span>${cards.length}</span></div>${
+      cards.map(issue => `<article class="kanban-card" data-issue="${Number(issue.number)}">
+        <button type="button" class="kanban-card-title" data-open-issue="${Number(issue.number)}">#${Number(issue.number)} · ${escapeHtml(issue.title)}</button>
+        <p>${escapeHtml((issue.body || '').slice(0, 150))}</p>
+        <small>${issue.state === 'closed' ? 'Closed' : 'Open'} · ${escapeHtml((issue.assignees || []).join(', ') || '미지정')}</small>
+        <label>상태 <select data-board-status data-issue="${Number(issue.number)}">
+          <option value="todo" ${status === 'todo' ? 'selected' : ''}>To Do</option>
+          <option value="in_progress" ${status === 'in_progress' ? 'selected' : ''}>In Progress</option>
+          <option value="done" ${status === 'done' ? 'selected' : ''}>Done</option>
+        </select></label>
+      </article>`).join('') || '<p class="subtle-empty">이슈 없음</p>'
+    }</section>`;
+  }).join('');
+}
+
+function renderBulkTools() {
+  const count = state.selectedIssues.size;
+  $('#bulkTools').hidden = count === 0;
+  $('#selectedIssueCount').textContent = `${count}개 선택`;
+}
+
+function configureBulkValue() {
+  const action = $('#bulkAction').value;
+  const value = $('#bulkValue');
+  if (action === 'assign') {
+    value.innerHTML = '<option value="">담당자 선택</option><option value="__none__">담당자 없음</option>'
+      + state.assignees.map(item => `<option value="${escapeHtml(item.login)}">${escapeHtml(item.login)}</option>`).join('');
+    value.hidden = false;
+  } else if (action === 'priority') {
+    value.innerHTML = '<option value="">우선순위 선택</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>';
+    value.hidden = false;
+  } else {
+    value.hidden = true;
+    value.innerHTML = '';
+  }
+}
+
+async function runBulkIssueAction() {
+  const numbers = [...state.selectedIssues];
+  const action = $('#bulkAction').value;
+  const value = $('#bulkValue').value;
+  if (!numbers.length || !action) {
+    toast('이슈와 일괄 작업을 선택해 주세요.', 'error');
+    return;
+  }
+  if ((action === 'assign' || action === 'priority') && !value) {
+    toast('변경할 값을 선택해 주세요.', 'error');
+    return;
+  }
+  const label = { close: '닫기', reopen: '다시 열기', assign: '담당자 변경', priority: '우선순위 변경' }[action];
+  if (!window.confirm(`선택한 ${numbers.length}개 이슈의 ${label} 작업을 실행할까요? GitHub에 실제 반영됩니다.`)) return;
+  const body = { numbers, action };
+  if (action === 'assign') body.assignees = value === '__none__' ? [] : [value];
+  if (action === 'priority') body.priority = value;
+  const button = $('#runBulkAction');
+  button.disabled = true;
+  try {
+    const result = await api('/api/issues/bulk', {
+      method: 'POST', body: JSON.stringify(body), timeoutMs: 120000
+    });
+    state.selectedIssues.clear();
+    $('#bulkAction').value = '';
+    configureBulkValue();
+    toast(`${result.succeeded}개 성공, ${result.failed}개 실패`,
+      result.failed ? 'error' : 'success');
+    const failures = result.items.filter(item => !item.ok)
+      .map(item => `#${item.number}: ${item.error}`).join('\n');
+    if (failures) window.alert(`일부 작업이 실패했습니다.\n${failures}`);
+    await refresh(true);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    renderIssues();
+  }
 }
 
 // 최근 활동
@@ -739,15 +885,32 @@ async function refresh(silent = false) {
 
 // GitHub에서 새 이슈 작성
 function openGithubNewIssue() {
-  const repo = state.config?.repo || state.selectedRepo;
+  selectView('issues');
+  $('#createIssueForm').hidden = false;
+  $('#createIssueTitle').focus();
+}
 
-  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
-    window.open(
-      `https://github.com/${repo}/issues/new`,
-      '_blank', 'noopener,noreferrer'
-    );
-  } else {
-    toast('GitHub 저장소를 먼저 연결해 주세요.', 'error');
+async function submitNewIssue(event) {
+  event.preventDefault();
+  const title = $('#createIssueTitle').value.trim();
+  const body = $('#createIssueBody').value;
+  if (!title) return;
+  if (!window.confirm(`"${title}" 이슈를 ${state.config.repo} 저장소에 등록할까요?`)) return;
+  const button = $('#createIssueForm').querySelector('[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await api('/api/issues', {
+      method: 'POST', body: JSON.stringify({ title, body }), timeoutMs: 60000
+    });
+    $('#createIssueForm').reset();
+    $('#createIssueForm').hidden = true;
+    toast('GitHub에 이슈를 등록했습니다. AI 분석은 자동 실행되지 않습니다.');
+    await refresh(true);
+    openDrawer(result.item.number);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -879,6 +1042,40 @@ function drawDetail(issue) {
       <h4 class="drawer-section-title">${icon('circle')} 이슈 설명</h4>
       <div class="detail-body">${escapeHtml(issue.body || '내용 없음')}</div>
     </div>
+    <details class="drawer-section issue-management" open>
+      <summary class="drawer-section-title">이슈 관리</summary>
+      <form id="editIssueForm">
+        <label for="editIssueTitle">제목</label>
+        <input id="editIssueTitle" maxlength="256" value="${escapeHtml(issue.title)}" required>
+        <label for="editIssueBody">본문</label>
+        <textarea id="editIssueBody" rows="5" maxlength="65536">${escapeHtml(issue.body || '')}</textarea>
+        <button class="btn btn-outline btn-sm" type="submit">제목·본문 저장</button>
+      </form>
+      <div class="issue-admin-row">
+        <button type="button" class="btn btn-outline btn-sm" id="toggleIssueStateBtn">${issue.state === 'closed' ? '이슈 다시 열기' : '이슈 닫기'}</button>
+        <label>우선순위 <select id="issuePrioritySelect">
+          <option value="high" ${level === 'high' ? 'selected' : ''}>High</option>
+          <option value="medium" ${level === 'medium' ? 'selected' : ''}>Medium</option>
+          <option value="low" ${level === 'low' ? 'selected' : ''}>Low</option>
+        </select></label>
+      </div>
+      <label for="issueAssignees">담당자</label>
+      <select id="issueAssignees" multiple size="4">${
+        state.assignees.map(person =>
+          `<option value="${escapeHtml(person.login)}" ${(issue.assignees || []).includes(person.login) ? 'selected' : ''}>${escapeHtml(person.login)}</option>`
+        ).join('')
+      }</select>
+      <button type="button" class="btn btn-outline btn-sm" id="saveIssueAssignees">담당자 저장</button>
+    </details>
+    <section class="drawer-section">
+      <h4 class="drawer-section-title">댓글</h4>
+      <div id="issueComments"><p class="subtle-empty">댓글을 불러오는 중입니다.</p></div>
+      <form id="newCommentForm" class="comment-form">
+        <label for="newCommentBody">댓글 작성</label>
+        <textarea id="newCommentBody" rows="3" maxlength="65536" required></textarea>
+        <button class="btn btn-outline btn-sm" type="submit">댓글 등록</button>
+      </form>
+    </section>
     <div class="drawer-section">
       <h4 class="drawer-section-title">${icon('spark')} AI 분석 결과</h4>
       ${analysisHtml}
@@ -890,10 +1087,164 @@ function drawDetail(issue) {
   $('#drawerGithub').dataset.url = link || '';
   $('#analyzeLabel').textContent = done ? '다시 분석' : 'AI 분석 실행';
   $('#analyzeBtn').dataset.force = done ? 'true' : 'false';
+  $('#editIssueForm').addEventListener('submit', saveIssueEdits);
+  $('#toggleIssueStateBtn').addEventListener('click', () => changeIssueState(issue));
+  $('#issuePrioritySelect').addEventListener('change', changeIssuePriority);
+  $('#saveIssueAssignees').addEventListener('click', saveIssueAssignees);
+  $('#newCommentForm').addEventListener('submit', createIssueComment);
+  loadComments(issue.number);
   const applyButton = $('#applyAnalysisBtn');
   if (applyButton) applyButton.addEventListener('click', applyAnalysis);
   const discordButton = $('#retryDiscordBtn');
   if (discordButton) discordButton.addEventListener('click', retryDiscord);
+}
+
+async function reloadSelectedIssue() {
+  const number = state.selected;
+  if (!number) return;
+  await refresh(true);
+  await openDrawer(number);
+}
+
+async function saveIssueEdits(event) {
+  event.preventDefault();
+  const number = state.selected;
+  const title = $('#editIssueTitle').value.trim();
+  const body = $('#editIssueBody').value;
+  try {
+    await api(`/api/issues/${number}`, {
+      method: 'PATCH', body: JSON.stringify({ title, body })
+    });
+    toast('이슈 내용을 저장했습니다.');
+    await reloadSelectedIssue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function changeIssueState(issue) {
+  const next = issue.state === 'closed' ? 'open' : 'closed';
+  const label = next === 'closed' ? '닫기' : '다시 열기';
+  if (!window.confirm(`이 이슈를 ${label}할까요? 실제 GitHub 이슈 상태가 변경됩니다.`)) return;
+  try {
+    await api(`/api/issues/${issue.number}/state`, {
+      method: 'POST', body: JSON.stringify({ state: next })
+    });
+    toast(`이슈를 ${next === 'closed' ? '닫았습니다.' : '다시 열었습니다.'}`);
+    await reloadSelectedIssue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function changeIssuePriority() {
+  const number = state.selected;
+  try {
+    await api(`/api/issues/${number}/priority`, {
+      method: 'PUT',
+      body: JSON.stringify({ priority: $('#issuePrioritySelect').value })
+    });
+    toast('우선순위 라벨을 변경했습니다.');
+    await reloadSelectedIssue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function saveIssueAssignees() {
+  const selected = [...$('#issueAssignees').selectedOptions].map(option => option.value);
+  try {
+    await api(`/api/issues/${state.selected}/assignees`, {
+      method: 'PUT', body: JSON.stringify({ assignees: selected })
+    });
+    toast('담당자를 변경했습니다.');
+    await reloadSelectedIssue();
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function loadComments(number) {
+  try {
+    const result = await api(`/api/issues/${number}/comments`);
+    if (state.selected !== number) return;
+    const parent = $('#issueComments');
+    parent.innerHTML = result.items.length ? result.items.map(comment => `
+      <article class="issue-comment">
+        <div><strong>${escapeHtml(comment.user || 'GitHub 사용자')}</strong><small>${escapeHtml(formatDate(comment.created_at))}</small></div>
+        <p>${escapeHtml(comment.body)}</p>
+        <div class="comment-actions">
+          <button type="button" class="btn btn-outline btn-sm" data-edit-comment="${Number(comment.id)}">수정</button>
+          <button type="button" class="btn btn-outline btn-sm" data-delete-comment="${Number(comment.id)}">삭제</button>
+        </div>
+      </article>
+    `).join('') : '<p class="subtle-empty">등록된 댓글이 없습니다.</p>';
+    $$('[data-edit-comment]').forEach(button => button.addEventListener('click', () => {
+      const item = result.items.find(value => value.id === Number(button.dataset.editComment));
+      if (item) editIssueComment(number, item);
+    }));
+    $$('[data-delete-comment]').forEach(button => button.addEventListener('click', () => {
+      deleteIssueComment(number, Number(button.dataset.deleteComment));
+    }));
+  } catch (error) {
+    if (state.selected === number) $('#issueComments').textContent = error.message;
+  }
+}
+
+async function createIssueComment(event) {
+  event.preventDefault();
+  const body = $('#newCommentBody').value.trim();
+  if (!body) return;
+  try {
+    await api(`/api/issues/${state.selected}/comments`, {
+      method: 'POST', body: JSON.stringify({ body })
+    });
+    $('#newCommentBody').value = '';
+    toast('댓글을 등록했습니다.');
+    await loadComments(state.selected);
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function editIssueComment(number, comment) {
+  const body = window.prompt('댓글 내용을 수정하세요.', comment.body);
+  if (body === null || !body.trim()) return;
+  try {
+    await api(`/api/issues/${number}/comments/${comment.id}`, {
+      method: 'PATCH', body: JSON.stringify({ body: body.trim() })
+    });
+    toast('댓글을 수정했습니다.');
+    await loadComments(number);
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function deleteIssueComment(number, commentId) {
+  if (!window.confirm('이 댓글을 GitHub에서 삭제할까요? 이 작업은 되돌릴 수 없습니다.')) return;
+  try {
+    await api(`/api/issues/${number}/comments/${commentId}`, {
+      method: 'DELETE', body: JSON.stringify({})
+    });
+    toast('댓글을 삭제했습니다.');
+    await loadComments(number);
+  } catch (error) {
+    toast(error.message, 'error');
+  }
+}
+
+async function changeBoardStatus(number, status) {
+  try {
+    await api(`/api/issues/${number}/board-status`, {
+      method: 'PUT', body: JSON.stringify({ status })
+    });
+    toast('칸반 상태를 GitHub 라벨에 저장했습니다.');
+    await refresh(true);
+  } catch (error) {
+    toast(error.message, 'error');
+    renderIssues();
+  }
 }
 
 // GPT 이슈 분석
@@ -1021,7 +1372,38 @@ function registerEvents() {
   });
 
   $('#issueSearch').addEventListener('input', renderIssues);
-  $('#issueFilter').addEventListener('change', renderIssues);
+  ['issueStateFilter', 'issueTypeFilter', 'issuePriorityFilter',
+    'issueAssigneeFilter', 'issueSort'].forEach(id =>
+    $(`#${id}`).addEventListener('change', renderIssues)
+  );
+  $('#resetIssueFilters').addEventListener('click', () => {
+    $('#issueSearch').value = '';
+    $('#issueStateFilter').value = 'all';
+    $('#issueTypeFilter').value = 'all';
+    $('#issuePriorityFilter').value = 'all';
+    $('#issueAssigneeFilter').value = 'all';
+    $('#issueSort').value = 'newest';
+    state.selectedIssues.clear();
+    renderIssues();
+  });
+  $('#listViewBtn').addEventListener('click', () => {
+    state.issueDisplay = 'list';
+    renderIssues();
+  });
+  $('#boardViewBtn').addEventListener('click', () => {
+    state.issueDisplay = 'board';
+    renderIssues();
+  });
+  $('#selectAllIssues').addEventListener('change', event => {
+    $$('.issue-select').forEach(box => {
+      const number = Number(box.dataset.issueSelect);
+      if (event.target.checked) state.selectedIssues.add(number);
+      else state.selectedIssues.delete(number);
+    });
+    renderIssues();
+  });
+  $('#bulkAction').addEventListener('change', configureBulkValue);
+  $('#runBulkAction').addEventListener('click', runBulkIssueAction);
 
   $('#closeDrawer').addEventListener('click', closeDrawer);
   $('#drawerOverlay').addEventListener('click', closeDrawer);
@@ -1044,6 +1426,11 @@ function registerEvents() {
   $('#setupRepoSearch').addEventListener('input', renderRepositoryList);
   $('#createRepoForm').addEventListener('submit', createRepository);
   $('#setupForm').addEventListener('submit', connectWorkspace);
+  $('#createIssueForm').addEventListener('submit', submitNewIssue);
+  $('#cancelCreateIssue').addEventListener('click', () => {
+    $('#createIssueForm').reset();
+    $('#createIssueForm').hidden = true;
+  });
   $('#integrationSettingsForm').addEventListener('submit', saveIntegrationSettings);
   $('#testOpenaiBtn').addEventListener('click', () => testIntegration('/api/settings/test-openai'));
   $('#testDiscordBtn').addEventListener('click', () => testIntegration('/api/settings/test-discord'));
