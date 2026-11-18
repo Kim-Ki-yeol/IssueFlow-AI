@@ -1864,6 +1864,8 @@ function registerEvents() {
   $('#integrationSettingsForm').addEventListener('submit', saveIntegrationSettings);
   $('#testOpenaiBtn').addEventListener('click', () => testIntegration('/api/settings/test-openai'));
   $('#testDiscordBtn').addEventListener('click', () => testIntegration('/api/settings/test-discord'));
+  $('#clearOpenaiBtn').addEventListener('click', () => clearIntegration('openai'));
+  $('#clearDiscordBtn').addEventListener('click', () => clearIntegration('discord'));
 
   $('#changeRepoBtn').addEventListener('click', () => {
     if (loggingOut) return;

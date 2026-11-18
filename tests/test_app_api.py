@@ -142,6 +142,8 @@ class SettingsApiTests(unittest.TestCase):
         self.assertIn('id="clearDiscordBtn"', markup)
         self.assertIn("state.config?.ai_enabled", script)
         self.assertIn("OPENAI_API_KEY_REQUIRED", script)
+        self.assertIn("clearOpenaiBtn').addEventListener('click'", script)
+        self.assertIn("clearDiscordBtn').addEventListener('click'", script)
         home.close()
         js.close()
         css.close()
