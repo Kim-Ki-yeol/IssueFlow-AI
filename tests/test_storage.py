@@ -43,6 +43,30 @@ class StorageTests(unittest.TestCase):
         self.assertFalse(storage.setting_status("user-2")["openai_configured"])
         self.assertEqual(storage.get_settings("user-2")["selected_repo"], "")
 
+    def test_clearing_one_integration_preserves_other_user_data_and_history(self):
+        storage.save_settings(
+            "user-1", "sk-user-one", "https://discord.com/api/webhooks/12/token",
+            "owner/repo",
+        )
+        storage.save_settings("user-2", "sk-user-two", "", "owner/other")
+        storage.save_analysis(
+            "user-1", "owner/repo", 9, "Existing history",
+            {"category": "bug"}, "complete",
+        )
+
+        storage.clear_user_integration("user-1", "openai")
+        first = storage.get_settings("user-1")
+        self.assertEqual(first["openai_api_key"], "")
+        self.assertEqual(first["discord_webhook_url"], "https://discord.com/api/webhooks/12/token")
+        self.assertEqual(first["selected_repo"], "owner/repo")
+        self.assertEqual(len(storage.history("user-1", "owner/repo")), 1)
+        self.assertEqual(storage.get_settings("user-2")["openai_api_key"], "sk-user-two")
+
+        storage.clear_user_integration("user-1", "discord")
+        self.assertFalse(storage.setting_status("user-1")["discord_configured"])
+        self.assertTrue(storage.setting_status("user-2")["openai_configured"])
+        self.assertEqual(len(storage.history("user-1", "owner/repo")), 1)
+
     def test_history_and_statistics_are_scoped_by_user_and_repository(self):
         item_id = storage.save_analysis(
             "user-1", "owner/repo", 4, "Bug title",

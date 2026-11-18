@@ -44,7 +44,7 @@ from agent.service import Service
 from agent.notifier import send_discord
 from agent.storage import (
     delete_expired_login_sessions, delete_login_session,
-    get_settings, history as get_history, init_db, load_login_session,
+    clear_user_integration, get_settings, history as get_history, init_db, load_login_session,
     persistent_sessions_enabled, save_analysis, save_login_session,
     save_settings, setting_status, statistics, update_analysis,
 )
@@ -437,6 +437,18 @@ def create_app() -> Flask:
     def settings_status():
         login = require_login()
         return jsonify(setting_status(login.user.get("id")))
+
+    @app.delete("/api/settings/openai-key")
+    def clear_openai_key():
+        login = require_login()
+        clear_user_integration(login.user.get("id"), "openai")
+        return jsonify({"ok": True, **setting_status(login.user.get("id"))})
+
+    @app.delete("/api/settings/discord-webhook")
+    def clear_discord_webhook():
+        login = require_login()
+        clear_user_integration(login.user.get("id"), "discord")
+        return jsonify({"ok": True, **setting_status(login.user.get("id"))})
 
     @app.put("/api/settings")
     def save_user_settings():
@@ -1027,6 +1039,11 @@ def create_app() -> Flask:
             )
 
         service = current_service()
+        if not service.cfg.ai_ready:
+            return jsonify({
+                "error": "AI 분석을 사용하려면 OpenAI API 키를 먼저 등록해 주세요.",
+                "code": "OPENAI_API_KEY_REQUIRED",
+            }), 409
 
         login = require_login()
         previous = get_history(login.user.get("id"), service.cfg.github_repo, number)

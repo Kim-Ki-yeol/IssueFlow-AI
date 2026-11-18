@@ -357,8 +357,10 @@
               <form id="integrationSettingsForm" class="guide-list">
                 <label for="settingsOpenaiKey">OpenAI API Key <small id="openaiKeyStatus">등록 상태 확인 중</small></label>
                 <input id="settingsOpenaiKey" type="password" autocomplete="new-password" placeholder="변경할 때만 새 키 입력">
+                <div class="integration-remove-row"><button id="clearOpenaiBtn" class="btn btn-outline btn-sm integration-danger" type="button" hidden>API 키 해제</button></div>
                 <label for="settingsDiscord">Discord Webhook URL <small id="discordKeyStatus">등록 상태 확인 중</small></label>
                 <input id="settingsDiscord" type="password" autocomplete="new-password" placeholder="변경할 때만 새 URL 입력">
+                <div class="integration-remove-row"><button id="clearDiscordBtn" class="btn btn-outline btn-sm integration-danger" type="button" hidden>Discord 연동 해제</button></div>
                 <div class="focus-actions">
                   <button type="submit" class="btn btn-primary">설정 저장</button>
                   <button type="button" class="btn btn-outline" id="testOpenaiBtn">OpenAI 연결 테스트</button>
@@ -387,6 +389,17 @@
     <div class="drawer-content" id="drawerContent"><p class="subtle-empty">이슈를 선택해 주세요.</p></div>
     <div class="drawer-footer"><button type="button" class="btn btn-outline" id="drawerGithub" hidden><svg class="icon"><use href="#i-external"/></svg> GitHub에서 보기</button><button type="button" class="btn btn-primary" id="analyzeBtn"><svg class="icon"><use href="#i-spark"/></svg><span id="analyzeLabel">이슈 분석 실행</span></button></div>
   </aside>
+
+  <dialog id="actionDialog" class="action-dialog" aria-labelledby="actionDialogTitle" aria-describedby="actionDialogMessage">
+    <div class="action-dialog-content">
+      <h2 id="actionDialogTitle"></h2>
+      <p id="actionDialogMessage"></p>
+      <div class="action-dialog-buttons">
+        <button type="button" class="btn btn-outline btn-sm" id="actionDialogCancel">취소</button>
+        <button type="button" class="btn btn-primary btn-sm" id="actionDialogConfirm">확인</button>
+      </div>
+    </div>
+  </dialog>
 
   <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
   <script defer src="/app.js"></script>

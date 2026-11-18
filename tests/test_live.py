@@ -72,11 +72,13 @@ class ServiceTests(unittest.TestCase):
         github = FakeGitHub()
         service = Service(make_config())
         service.github = github
-        result = service.apply(12, ANALYSIS, apply_labels=True, post_comment=True)
+        with patch("agent.service.send_discord") as send_discord:
+            result = service.apply(12, ANALYSIS, apply_labels=True, post_comment=True)
         self.assertEqual(result["status"], "applied")
         self.assertTrue(result["labels_applied"])
         self.assertTrue(result["comment_applied"])
         self.assertIn(COMMENT_MARKER, github.comments[0][1])
+        send_discord.assert_not_called()
 
     def test_read_only_still_calls_real_gpt_but_does_not_write(self):
         github = FakeGitHub()

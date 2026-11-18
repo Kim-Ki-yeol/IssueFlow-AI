@@ -53,10 +53,62 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(status.status_code, 200)
         self.assertEqual(set(status.json), {"openai_configured", "discord_configured"})
 
+    def test_clear_endpoints_only_clear_the_current_users_requested_secret(self):
+        storage.save_settings(
+            101, "sk-current-user", "https://discord.com/api/webhooks/123/mock",
+            "test-owner/test-repo",
+        )
+        storage.save_settings(202, "sk-other-user", "", "other-owner/other-repo")
+        storage.save_analysis(
+            101, "test-owner/test-repo", 12, "Saved history",
+            {"category": "bug"}, "complete",
+        )
+
+        openai_response = self.client.delete("/api/settings/openai-key", json={})
+        self.assertEqual(openai_response.status_code, 200)
+        current = storage.get_settings(101)
+        self.assertEqual(current["openai_api_key"], "")
+        self.assertTrue(openai_response.json["discord_configured"])
+        self.assertEqual(current["selected_repo"], "test-owner/test-repo")
+        self.assertEqual(storage.get_settings(202)["openai_api_key"], "sk-other-user")
+
+        discord_response = self.client.delete("/api/settings/discord-webhook", json={})
+        self.assertEqual(discord_response.status_code, 200)
+        self.assertFalse(discord_response.json["discord_configured"])
+        self.assertEqual(storage.get_settings(202)["openai_api_key"], "sk-other-user")
+        self.assertEqual(len(storage.history(101, "test-owner/test-repo")), 1)
+
+    def test_missing_user_openai_key_blocks_analysis_without_history_or_global_fallback(self):
+        class FakeGitHub:
+            pass
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-global-test-only"}), \
+             patch(
+                 "app.get_installation_repositories",
+                 return_value=[{"full_name": "test-owner/test-repo"}],
+             ), patch("agent.service.GitHubClient", return_value=FakeGitHub()), \
+             patch("app.save_analysis") as save_analysis, \
+             patch("agent.service.analyze_issue") as analyze_issue:
+            response = self.client.post("/api/issues/12/analyze", json={})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json["code"], "OPENAI_API_KEY_REQUIRED")
+        analyze_issue.assert_not_called()
+        save_analysis.assert_not_called()
+        self.assertFalse(storage.setting_status(101)["openai_configured"])
+
     def test_settings_api_requires_login(self):
         self.client.delete_cookie("session")
         response = self.client.get("/api/settings")
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            self.client.delete("/api/settings/openai-key", json={}).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.delete("/api/settings/discord-webhook", json={}).status_code,
+            401,
+        )
 
     def test_local_logout_revokes_session_but_preserves_user_settings(self):
         storage.save_settings(101, "sk-mock-openai-key", "", "test-owner/test-repo")
@@ -75,6 +127,7 @@ class SettingsApiTests(unittest.TestCase):
         js = self.client.get("/app.js")
         css = self.client.get("/styles.css")
         markup = home.get_data(as_text=True)
+        script = js.get_data(as_text=True)
         self.assertEqual(home.status_code, 200)
         self.assertIn('id="setupLoading"', markup)
         self.assertRegex(markup, r'id="setupLogin"[^>]*hidden')
@@ -85,6 +138,10 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(css.status_code, 200)
         self.assertIn("javascript", js.mimetype)
         self.assertEqual(css.mimetype, "text/css")
+        self.assertIn('id="clearOpenaiBtn"', markup)
+        self.assertIn('id="clearDiscordBtn"', markup)
+        self.assertIn("state.config?.ai_enabled", script)
+        self.assertIn("OPENAI_API_KEY_REQUIRED", script)
         home.close()
         js.close()
         css.close()

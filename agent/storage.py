@@ -241,6 +241,23 @@ def save_settings(user_id: object, openai_key: str, discord_webhook: str, repo: 
         """, (owner, encrypted_key, encrypted_webhook, repo))
 
 
+def clear_user_integration(user_id: object, integration: str) -> None:
+    """Clear one encrypted credential while preserving the user's other settings."""
+    columns = {
+        "openai": "openai_key",
+        "discord": "discord_webhook",
+    }
+    column = columns.get(integration)
+    if column is None:
+        raise ValueError("연동 종류가 올바르지 않습니다.")
+    with connect() as db:
+        db.execute(
+            f"UPDATE user_settings SET {column} = NULL, updated_at = CURRENT_TIMESTAMP "
+            "WHERE user_id = ?",
+            (_owner(user_id),),
+        )
+
+
 def get_settings(user_id: object) -> dict:
     owner = _owner(user_id)
     with connect() as db:

@@ -331,7 +331,11 @@ async function api(path, options = {}) {
     });
 
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(data.error || `HTTP ${response.status}`);
+      error.code = data.code;
+      throw error;
+    }
     return data;
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -739,13 +743,88 @@ async function saveIntegrationSettings(event) {
   }
 }
 
+function showActionDialog({
+  title, message, confirmText = '확인', confirmClass = 'btn-primary'
+}) {
+  const dialog = $('#actionDialog');
+  if (dialog.open) return Promise.resolve(false);
+  $('#actionDialogTitle').textContent = title;
+  $('#actionDialogMessage').textContent = message;
+  const cancel = $('#actionDialogCancel');
+  const confirm = $('#actionDialogConfirm');
+  confirm.textContent = confirmText;
+  confirm.className = `btn btn-sm ${confirmClass}`;
+
+  return new Promise(resolve => {
+    let settled = false;
+    let onCancel;
+    const finish = accepted => {
+      if (settled) return;
+      settled = true;
+      if (onCancel) dialog.removeEventListener('cancel', onCancel);
+      dialog.close();
+      resolve(accepted);
+    };
+    cancel.onclick = () => finish(false);
+    confirm.onclick = () => finish(true);
+    onCancel = event => {
+      event.preventDefault();
+      finish(false);
+    };
+    dialog.addEventListener('cancel', onCancel);
+    dialog.showModal();
+    cancel.focus();
+  });
+}
+
+async function clearIntegration(kind) {
+  const openai = kind === 'openai';
+  const button = openai ? $('#clearOpenaiBtn') : $('#clearDiscordBtn');
+  if (!button || button.disabled) return;
+  const confirmed = await showActionDialog({
+    title: openai ? 'OpenAI API 키 해제' : 'Discord 연동 해제',
+    message: openai
+      ? '현재 사용자의 OpenAI API 키를 해제할까요? 기존 분석 기록과 GitHub 데이터는 유지됩니다.'
+      : '현재 사용자의 Discord Webhook 연동을 해제할까요? AI 분석과 GitHub 연동은 유지됩니다.',
+    confirmText: openai ? 'API 키 해제' : '연동 해제',
+    confirmClass: 'btn-danger'
+  });
+  if (!confirmed) return;
+
+  button.disabled = true;
+  try {
+    const path = openai
+      ? '/api/settings/openai-key'
+      : '/api/settings/discord-webhook';
+    const result = await api(path, {
+      method: 'DELETE',
+      body: JSON.stringify({})
+    });
+    if (state.config) {
+      state.config.ai_enabled = result.openai_configured;
+      state.config.discord_enabled = result.discord_configured;
+      renderConfig();
+    }
+    await loadSettingStatus();
+    toast(openai ? 'OpenAI API 키를 해제했습니다.' : 'Discord 연동을 해제했습니다.');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadSettingStatus() {
   try {
     const result = await api('/api/settings');
     $('#openaiKeyStatus').textContent = result.openai_configured ? '설정됨 · 원본 비공개' : '미설정';
     $('#discordKeyStatus').textContent = result.discord_configured ? '설정됨 · 원본 비공개' : '미설정';
+    $('#clearOpenaiBtn').hidden = !result.openai_configured;
+    $('#clearDiscordBtn').hidden = !result.discord_configured;
+    return result;
   } catch (_) {
     // Do not surface key or server details in the page.
+    return null;
   }
 }
 
@@ -1567,6 +1646,10 @@ async function changeBoardStatus(number, status) {
 // GPT 이슈 분석
 async function runAnalysis() {
   if (state.busy || state.selected == null || !state.connected || loggingOut) return;
+  if (!state.config?.ai_enabled) {
+    await promptApiKeyRegistration();
+    return;
+  }
 
   const number = state.selected;
   const id = connectionId;
@@ -1605,7 +1688,15 @@ async function runAnalysis() {
     }
   } catch (err) {
     if (!loggingOut && id === connectionId) {
-      toast(err.message, 'error');
+      if (err.code === 'OPENAI_API_KEY_REQUIRED') {
+        if (state.config) {
+          state.config.ai_enabled = false;
+          renderConfig();
+        }
+        await promptApiKeyRegistration();
+      } else {
+        toast(err.message, 'error');
+      }
       $('#analyzeLabel').textContent = 'AI 분석 실행';
     }
   } finally {
@@ -1614,6 +1705,17 @@ async function runAnalysis() {
       button.disabled = false;
     }
   }
+}
+
+async function promptApiKeyRegistration() {
+  const register = await showActionDialog({
+    title: 'OpenAI API 키가 필요합니다',
+    message: 'AI 분석을 사용하려면 OpenAI API 키를 먼저 등록해 주세요.',
+    confirmText: 'API 키 등록하기'
+  });
+  if (!register) return;
+  selectView('settings');
+  $('#settingsOpenaiKey').focus();
 }
 
 async function applyAnalysis() {

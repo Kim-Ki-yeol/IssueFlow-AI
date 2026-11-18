@@ -194,6 +194,17 @@ select {background:#fff;border:1px solid #dce4de;border-radius:7px;padding:9px 1
 .guide-list label small {margin-left:6px;color:#7d8b81;font-weight:400}
 .guide-list input[type="password"] {display:block;width:calc(100% - 46px);box-sizing:border-box;margin:0 23px 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--ink);font:inherit}
 .guide-list .focus-actions {display:flex;flex-wrap:wrap;gap:8px;padding:8px 23px 16px}
+.integration-remove-row {display:flex;justify-content:flex-end;margin:0 23px 10px}
+.integration-danger {border-color:#e6cecc;color:#a34f49;background:#fff}
+.integration-danger:hover {border-color:#d9b5b1;color:#8f3f3a;background:#fbf4f3}
+.action-dialog {width:min(420px,calc(100vw - 32px));padding:0;border:1px solid #e2e8e3;border-radius:14px;background:#fff;color:var(--ink);box-shadow:0 20px 60px rgba(24,40,30,.2)}
+.action-dialog::backdrop {background:rgba(24,35,30,.42)}
+.action-dialog-content {padding:24px}
+.action-dialog h2 {margin:0 0 9px;font-size:17px;letter-spacing:-.04em}
+.action-dialog p {margin:0;color:var(--sub);font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.action-dialog-buttons {display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+.action-dialog .btn-danger {border-color:#a84943;background:#a84943;color:#fff}
+.action-dialog .btn-danger:hover {background:#913d38}
 .analysis-detail label {display:inline-block;margin:5px 12px 8px 0;font-size:12px;color:var(--ink)}
 .analysis-detail .btn {margin-top:8px}
 .list-controls {flex-wrap:wrap;justify-content:flex-end}
