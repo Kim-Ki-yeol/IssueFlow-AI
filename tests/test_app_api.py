@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -54,6 +56,21 @@ class SettingsApiTests(unittest.TestCase):
         self.client.delete_cookie("session")
         response = self.client.get("/api/settings")
         self.assertEqual(response.status_code, 401)
+
+    def test_flask_serves_frontend_assets_and_vercel_checks_filesystem_first(self):
+        js = self.client.get("/app.js")
+        css = self.client.get("/styles.css")
+        self.assertEqual(js.status_code, 200)
+        self.assertEqual(css.status_code, 200)
+        self.assertIn("javascript", js.mimetype)
+        self.assertEqual(css.mimetype, "text/css")
+        js.close()
+        css.close()
+
+        root = Path(__file__).resolve().parents[1]
+        config = json.loads((root / "vercel.json").read_text(encoding="utf-8"))
+        self.assertEqual(config["routes"][0].get("handle"), "filesystem")
+        self.assertIn("public", config["functions"]["app.py"]["includeFiles"])
 
     def test_persistent_session_is_loaded_and_deleted_server_side(self):
         stored = {
@@ -144,6 +161,23 @@ class SettingsApiTests(unittest.TestCase):
         }):
             with self.assertRaisesRegex(RuntimeError, "형식"):
                 app_module.oauth_redirect_uri()
+
+    def test_login_path_is_auth_github_not_auth_github_login(self):
+        response = self.client.get("/auth/github/login")
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("로그인 검증에 실패했습니다", response.get_data(as_text=True))
+
+    def test_oauth_start_rejects_a_preview_host_mismatched_with_registered_callback(self):
+        callback = "https://issue-flow-ai.vercel.app/auth/github/callback"
+        with patch("app.oauth_redirect_uri", return_value=callback), \
+             patch("app.create_login_url") as create_url:
+            response = self.client.get(
+                "/auth/github",
+                base_url="https://issue-flow-ai-preview.vercel.app",
+            )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Callback URL", response.json["error"])
+        create_url.assert_not_called()
 
     def test_issue_crud_and_comments_routes_use_mocked_github_client(self):
         class FakeGitHub:

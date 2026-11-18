@@ -333,6 +333,10 @@ def create_app() -> Flask:
     @app.get("/auth/github")
     def github_login():
         redirect_uri = oauth_redirect_uri()
+        if urlsplit(redirect_uri).netloc.lower() != request.host.lower():
+            raise GitHubAuthError(
+                "GitHub 로그인은 Callback URL과 같은 도메인에서 시작해 주세요."
+            )
         url, state = create_login_url(redirect_uri)
 
         session["oauth_state"] = state

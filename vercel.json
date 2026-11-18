@@ -6,7 +6,15 @@
       "use": "@vercel/python"
     }
   ],
+  "functions": {
+    "app.py": {
+      "includeFiles": "{public,templates}/**"
+    }
+  },
   "routes": [
+    {
+      "handle": "filesystem"
+    },
     {
       "src": "/(.*)",
       "dest": "app.py"
