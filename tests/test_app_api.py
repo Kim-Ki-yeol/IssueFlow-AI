@@ -173,14 +173,14 @@ class SettingsApiTests(unittest.TestCase):
         if created_sid:
             app_module.LOGIN_SESSIONS.pop(created_sid, None)
 
-    def test_relogin_restores_same_users_repository_selection(self):
+    def test_relogin_requires_repository_selection_and_preserves_saved_settings(self):
         callback = "http://localhost/auth/github/callback"
         storage.save_settings(303, "sk-mock-user-key", "", "test-owner/test-repo")
         with patch("app.oauth_redirect_uri", return_value=callback), \
              patch("app.create_login_url", return_value=("https://github.test/authorize", "state-relogin")), \
              patch("app.exchange_code", return_value="mock-github-token") as exchange, \
              patch("app.get_current_user", return_value={"id": 303, "login": "mock-user"}), \
-             patch("app.get_installations", return_value=[{"id": 7}]), \
+             patch("app.get_installations") as installations, \
              patch("app.get_installation_repositories", return_value=[
                  {"full_name": "test-owner/test-repo"},
              ]):
@@ -191,8 +191,48 @@ class SettingsApiTests(unittest.TestCase):
             auth = self.client.get("/api/auth/me")
         self.assertEqual(response.status_code, 302)
         self.assertTrue(auth.json["authenticated"])
-        self.assertEqual(auth.json["selected_repo"], "test-owner/test-repo")
+        self.assertEqual(auth.json["selected_repo"], "")
+        installations.assert_not_called()
+        self.assertEqual(
+            storage.get_settings(303)["selected_repo"],
+            "test-owner/test-repo",
+        )
         exchange.assert_called_once_with("mock-code", redirect_uri=callback)
+
+        with patch(
+            "app.get_installation_repositories",
+            return_value=[{"full_name": "test-owner/other-repo"}],
+        ):
+            selected = self.client.post("/api/github/select-repository", json={
+                "repo": "test-owner/other-repo",
+                "installation_id": 7,
+            })
+        self.assertEqual(selected.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/auth/me").json["selected_repo"],
+            "",
+        )
+        self.assertEqual(
+            storage.get_settings(303)["selected_repo"],
+            "test-owner/test-repo",
+        )
+
+        with patch(
+            "app.get_installation_repositories",
+            return_value=[{"full_name": "test-owner/other-repo"}],
+        ):
+            connected = self.client.put("/api/settings", json={
+                "openai_api_key": "",
+                "discord_webhook_url": "",
+            })
+        self.assertEqual(connected.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/auth/me").json["selected_repo"],
+            "test-owner/other-repo",
+        )
+        settings = storage.get_settings(303)
+        self.assertEqual(settings["selected_repo"], "test-owner/other-repo")
+        self.assertEqual(settings["openai_api_key"], "sk-mock-user-key")
         with self.client.session_transaction() as browser_session:
             created_sid = browser_session.get("sid")
         if created_sid:

@@ -364,16 +364,6 @@ def create_app() -> Flask:
         # GitHub 인증 코드를 토큰으로 교환
         token = exchange_code(code, redirect_uri=redirect_uri or oauth_redirect_uri())
         user = get_current_user(token)
-        saved = get_settings(user.get("id"))
-        restored_repo, restored_installation = saved["selected_repo"], 0
-        if restored_repo:
-            for installation in get_installations(token):
-                repos = get_installation_repositories(token, installation["id"])
-                if any(item["full_name"] == restored_repo for item in repos):
-                    restored_installation = installation["id"]
-                    break
-            if not restored_installation:
-                restored_repo = ""
 
         clean_sessions()
 
@@ -394,13 +384,15 @@ def create_app() -> Flask:
             token=token,
             user=user,
             expires_at=time.time() + SESSION_LIFETIME,
-            repo=restored_repo,
-            installation_id=restored_installation,
+            # Each OAuth login must explicitly reselect a workspace. The user's
+            # saved repository and settings remain untouched in user_settings.
+            repo="",
+            installation_id=0,
         )
         if persistent_sessions_enabled():
             save_login_session(
                 sid, user, token, login_data.expires_at,
-                restored_repo, restored_installation,
+                "", 0,
             )
         else:
             with SESSION_LOCK:
@@ -444,11 +436,25 @@ def create_app() -> Flask:
         body = request.get_json(silent=True) or {}
         api_key = str(body.get("openai_api_key") or "").strip()
         discord = str(body.get("discord_webhook_url") or "").strip()
-        repo = str(login.repo or "").strip()
+        pending_repo = str(session.get("pending_repo") or "").strip()
+        pending_installation = session.get("pending_installation_id")
+        repo = pending_repo or str(login.repo or "").strip()
+        installation_id = login.installation_id
         if len(api_key) > 500 or len(discord) > 500:
             raise ValueError("입력한 설정 값이 너무 깁니다.")
         if api_key and not api_key.startswith("sk-"):
             raise ValueError("OpenAI API Key 형식을 확인해 주세요.")
+        if pending_repo:
+            if (
+                not isinstance(pending_installation, int)
+                or isinstance(pending_installation, bool)
+                or pending_installation <= 0
+            ):
+                raise ValueError("저장소를 다시 선택해 주세요.")
+            available = get_installation_repositories(login.token, pending_installation)
+            if not any(item["full_name"] == pending_repo for item in available):
+                raise GitHubAuthError("선택한 저장소의 접근 권한이 없습니다.")
+            installation_id = pending_installation
         if discord:
             get_user_config({
                 "github_repo": repo or "owner/repo",
@@ -457,6 +463,17 @@ def create_app() -> Flask:
                 "discord_webhook_url": discord,
             })
         save_settings(login.user.get("id"), api_key, discord, repo)
+        if pending_repo:
+            with login.lock:
+                login.repo = pending_repo
+                login.installation_id = installation_id
+            if persistent_sessions_enabled():
+                save_login_session(
+                    session.get("sid"), login.user, login.token, login.expires_at,
+                    pending_repo, installation_id,
+                )
+            session.pop("pending_repo", None)
+            session.pop("pending_installation_id", None)
         return jsonify({"ok": True, **setting_status(login.user.get("id"))})
 
     @app.post("/api/settings/test-openai")
@@ -564,19 +581,10 @@ def create_app() -> Flask:
                 "선택한 저장소에 접근할 수 없습니다."
             )
 
-        with login.lock:
-            login.repo = repo
-            login.installation_id = installation_id
-        if persistent_sessions_enabled():
-            save_login_session(
-                session.get("sid"), login.user, login.token, login.expires_at,
-                repo, installation_id,
-            )
-        saved = get_settings(login.user.get("id"))
-        save_settings(
-            login.user.get("id"), saved["openai_api_key"],
-            saved["discord_webhook_url"], repo,
-        )
+        # Selection is temporary until the workspace setup form is explicitly
+        # submitted. Do not persist/activate a repository merely by clicking it.
+        session["pending_repo"] = repo
+        session["pending_installation_id"] = installation_id
 
         return jsonify({
             "ok": True,
