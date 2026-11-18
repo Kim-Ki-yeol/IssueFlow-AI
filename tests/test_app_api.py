@@ -11,8 +11,17 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-import app as app_module
 from agent import storage
+
+# app.py creates its module-level Flask app during import. Keep that startup
+# initialization isolated from any developer or production database.
+_BOOTSTRAP_DATABASE = tempfile.TemporaryDirectory()
+with patch.dict(os.environ, {
+    "ISSUEFLOW_DATABASE_PATH": os.path.join(_BOOTSTRAP_DATABASE.name, "bootstrap.sqlite3"),
+    "DATA_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+    "VERCEL": "",
+}):
+    import app as app_module
 
 
 class SettingsApiTests(unittest.TestCase):
@@ -78,6 +87,53 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(storage.get_settings(202)["openai_api_key"], "sk-other-user")
         self.assertEqual(len(storage.history(101, "test-owner/test-repo")), 1)
 
+    def test_analysis_history_clear_is_authenticated_user_scoped_and_preserves_settings(self):
+        storage.save_settings(
+            101, "sk-current-user", "https://discord.com/api/webhooks/123/mock",
+            "test-owner/test-repo",
+        )
+        storage.save_settings(202, "sk-other-user", "", "other-owner/other-repo")
+        storage.save_analysis(
+            101, "test-owner/test-repo", 12, "GitHub issue",
+            {"category": "bug"}, "complete",
+        )
+        storage.save_analysis(
+            101, "previous-owner/repo", 3, "Old repository history",
+            {"category": "feature"}, "complete",
+        )
+        storage.save_analysis(
+            202, "other-owner/other-repo", 9, "Other user's history",
+            {"category": "question"}, "complete",
+        )
+
+        with patch("app.get_installation_repositories") as github_repositories, \
+             patch("agent.service.GitHubClient") as github_client:
+            response = self.client.delete("/api/analysis-history", json={})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["deleted"], 2)
+        self.assertEqual(response.json["statistics"], {
+            "total": 0, "applied": 0, "pending": 0, "failed": 0,
+        })
+        github_repositories.assert_not_called()
+        github_client.assert_not_called()
+        self.assertEqual(storage.history(101, "test-owner/test-repo"), [])
+        self.assertEqual(storage.history(101, "previous-owner/repo"), [])
+        self.assertEqual(len(storage.history(202, "other-owner/other-repo")), 1)
+        self.assertEqual(storage.get_settings(101), {
+            "openai_api_key": "sk-current-user",
+            "discord_webhook_url": "https://discord.com/api/webhooks/123/mock",
+            "selected_repo": "test-owner/test-repo",
+        })
+        self.assertEqual(storage.get_settings(202)["openai_api_key"], "sk-other-user")
+
+        new_id = storage.save_analysis(
+            101, "test-owner/test-repo", 12, "New analysis",
+            {"category": "bug"}, "complete",
+        )
+        self.assertGreater(new_id, 0)
+        self.assertEqual(storage.statistics(101, "test-owner/test-repo")["total"], 1)
+
     def test_missing_user_openai_key_blocks_analysis_without_history_or_global_fallback(self):
         class FakeGitHub:
             pass
@@ -107,6 +163,10 @@ class SettingsApiTests(unittest.TestCase):
         )
         self.assertEqual(
             self.client.delete("/api/settings/discord-webhook", json={}).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.delete("/api/analysis-history", json={}).status_code,
             401,
         )
 
@@ -142,6 +202,9 @@ class SettingsApiTests(unittest.TestCase):
         self.assertIn('id="clearDiscordBtn"', markup)
         self.assertIn("clearOpenaiBtn').addEventListener('click'", script)
         self.assertIn("clearDiscordBtn').addEventListener('click'", script)
+        self.assertIn('id="clearAnalysisHistoryBtn"', markup)
+        self.assertIn("clearAnalysisHistoryBtn').addEventListener('click'", script)
+        self.assertIn("renderAnalysisStats(result.statistics)", script)
         self.assertIn("state.config?.ai_enabled", script)
         self.assertIn("OPENAI_API_KEY_REQUIRED", script)
         self.assertIn("clearOpenaiBtn').addEventListener('click'", script)
@@ -151,6 +214,10 @@ class SettingsApiTests(unittest.TestCase):
         css.close()
 
         root = Path(__file__).resolve().parents[1]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        self.assertIn("![IssueFlow AI 시스템 아키텍처](docs/architecture/issueflow-architecture.svg)", readme)
+        self.assertTrue((root / "docs" / "architecture" / "issueflow-architecture.svg").is_file())
+        self.assertTrue((root / "docs" / "architecture" / "issueflow-architecture.png").is_file())
         config = json.loads((root / "vercel.json").read_text(encoding="utf-8"))
         self.assertNotIn("routes", config)
         rewrites = {item["source"]: item["destination"] for item in config["rewrites"]}

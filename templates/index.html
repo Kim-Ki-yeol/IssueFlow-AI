@@ -279,7 +279,13 @@
             <article class="metric-card"><div class="metric-top"><span>높은 우선순위</span><svg class="icon"><use href="#i-zap"/></svg></div><div class="metric-value" id="metricHigh">0</div><div class="metric-desc">확인이 필요한 이슈</div></article>
             <article class="metric-card"><div class="metric-top"><span>분석 대기</span><svg class="icon"><use href="#i-clock"/></svg></div><div class="metric-value" id="metricPending">0</div><div class="metric-desc">아직 분류되지 않음</div></article>
           </div>
-          <div class="section-caption"><strong>AI 작업 통계</strong><span>저장된 분석 이력 기준</span></div>
+          <div class="section-caption">
+            <strong>AI 작업 통계</strong>
+            <div class="section-caption-actions">
+              <span>저장된 분석 이력 기준</span>
+              <button type="button" class="btn btn-outline btn-sm" id="clearAnalysisHistoryBtn">분석 기록 초기화</button>
+            </div>
+          </div>
           <div class="metrics-grid">
             <article class="metric-card"><div class="metric-top"><span>전체 분석</span></div><div class="metric-value" id="metricAiTotal">0</div><div class="metric-desc">실행된 AI 분석</div></article>
             <article class="metric-card"><div class="metric-top"><span>GitHub 적용</span></div><div class="metric-value" id="metricAiApplied">0</div><div class="metric-desc">적용 완료</div></article>

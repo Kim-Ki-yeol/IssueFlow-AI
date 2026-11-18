@@ -409,6 +409,16 @@ def update_analysis(
             raise LookupError("분석 이력을 찾을 수 없습니다.")
 
 
+def clear_analysis_history(user_id: object) -> int:
+    """Delete only analysis-history rows owned by one authenticated user."""
+    with connect() as db:
+        cursor = db.execute(
+            "DELETE FROM analysis_history WHERE user_id = ?",
+            (_owner(user_id),),
+        )
+        return max(int(cursor.rowcount), 0)
+
+
 def history(user_id: object, repo: str, issue_number: int | None = None) -> list[dict]:
     query = """
         SELECT id, repository, issue_number, issue_title, analysis_json,

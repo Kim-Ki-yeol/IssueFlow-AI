@@ -95,6 +95,45 @@ class StorageTests(unittest.TestCase):
             "total": 1, "applied": 0, "pending": 0, "failed": 1,
         })
 
+    def test_clearing_analysis_history_preserves_other_users_settings_and_allows_new_history(self):
+        storage.save_settings(
+            "user-1", "sk-user-one", "https://discord.com/api/webhooks/12/token",
+            "owner/repo",
+        )
+        storage.save_settings("user-2", "sk-user-two", "", "owner/other")
+        storage.save_analysis(
+            "user-1", "owner/repo", 4, "First issue",
+            {"category": "bug"}, "complete",
+        )
+        storage.save_analysis(
+            "user-1", "another/repo", 8, "Second issue",
+            {"category": "feature"}, "complete",
+        )
+        storage.save_analysis(
+            "user-2", "owner/repo", 7, "Other user's issue",
+            {"category": "question"}, "complete",
+        )
+
+        self.assertEqual(storage.clear_analysis_history("user-1"), 2)
+        self.assertEqual(storage.history("user-1", "owner/repo"), [])
+        self.assertEqual(storage.history("user-1", "another/repo"), [])
+        self.assertEqual(len(storage.history("user-2", "owner/repo")), 1)
+        self.assertEqual(storage.get_settings("user-1"), {
+            "openai_api_key": "sk-user-one",
+            "discord_webhook_url": "https://discord.com/api/webhooks/12/token",
+            "selected_repo": "owner/repo",
+        })
+        self.assertEqual(storage.get_settings("user-2")["openai_api_key"], "sk-user-two")
+
+        new_id = storage.save_analysis(
+            "user-1", "owner/repo", 4, "Reanalyzed issue",
+            {"category": "bug"}, "complete",
+        )
+        self.assertGreater(new_id, 0)
+        self.assertEqual(storage.statistics("user-1", "owner/repo"), {
+            "total": 1, "applied": 0, "pending": 1, "failed": 0,
+        })
+
     def test_login_session_token_is_encrypted_and_expiry_is_enforced(self):
         database = sqlite3.connect(os.environ["ISSUEFLOW_DATABASE_PATH"])
         try:

@@ -43,7 +43,7 @@ from agent.github_client import GitHubError
 from agent.service import Service
 from agent.notifier import send_discord
 from agent.storage import (
-    delete_expired_login_sessions, delete_login_session,
+    clear_analysis_history, delete_expired_login_sessions, delete_login_session,
     clear_user_integration, get_settings, history as get_history, init_db, load_login_session,
     persistent_sessions_enabled, save_analysis, save_login_session,
     save_settings, setting_status, statistics, update_analysis,
@@ -1158,6 +1158,19 @@ def create_app() -> Flask:
         return jsonify({
             "items": get_history(login.user.get("id"), service.cfg.github_repo),
             "statistics": statistics(login.user.get("id"), service.cfg.github_repo),
+        })
+
+    @app.delete("/api/analysis-history")
+    def clear_analysis_history_api():
+        login = require_login()
+        user_id = login.user.get("id")
+        with login.lock:
+            repo = login.repo
+        deleted = clear_analysis_history(user_id)
+        return jsonify({
+            "ok": True,
+            "deleted": deleted,
+            "statistics": statistics(user_id, repo),
         })
 
     @app.get("/api/issues/<int:number>/analysis-history")

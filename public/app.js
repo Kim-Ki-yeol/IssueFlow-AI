@@ -15,6 +15,7 @@ const state = {
 let connectionId = 0;
 let loggingOut = false;
 let authCheckId = 0;
+let clearingAnalysisHistory = false;
 
 const icons = {
   check: 'i-check', spark: 'i-spark', circle: 'i-circle',
@@ -1204,6 +1205,33 @@ async function refresh(silent = false) {
   }
 }
 
+async function clearAnalysisHistory() {
+  const button = $('#clearAnalysisHistoryBtn');
+  if (clearingAnalysisHistory || !state.connected || loggingOut) return;
+  const confirmed = await showActionDialog({
+    title: 'AI 분석 기록 초기화',
+    message: '현재 로그인한 계정의 모든 저장된 AI 분석 이력을 삭제합니다. GitHub 이슈·라벨·댓글과 연동 설정은 유지됩니다. 삭제한 기록은 복구할 수 없습니다.',
+    confirmText: '기록 초기화',
+    confirmClass: 'btn-danger'
+  });
+  if (!confirmed || clearingAnalysisHistory || loggingOut) return;
+
+  clearingAnalysisHistory = true;
+  button.disabled = true;
+  try {
+    const result = await api('/api/analysis-history', {
+      method: 'DELETE', body: JSON.stringify({})
+    });
+    renderAnalysisStats(result.statistics);
+    toast(`AI 분석 기록 ${result.deleted || 0}건을 초기화했습니다.`);
+  } catch (error) {
+    toast(error.message || 'AI 분석 기록을 초기화하지 못했습니다.', 'error');
+  } finally {
+    clearingAnalysisHistory = false;
+    button.disabled = false;
+  }
+}
+
 // GitHub에서 새 이슈 작성
 function openGithubNewIssue() {
   selectView('issues');
@@ -1864,6 +1892,7 @@ function registerEvents() {
   $('#integrationSettingsForm').addEventListener('submit', saveIntegrationSettings);
   $('#testOpenaiBtn').addEventListener('click', () => testIntegration('/api/settings/test-openai'));
   $('#testDiscordBtn').addEventListener('click', () => testIntegration('/api/settings/test-discord'));
+  $('#clearAnalysisHistoryBtn').addEventListener('click', clearAnalysisHistory);
   $('#clearOpenaiBtn').addEventListener('click', () => clearIntegration('openai'));
   $('#clearDiscordBtn').addEventListener('click', () => clearIntegration('discord'));
   $('#clearOpenaiBtn').addEventListener('click', () => clearIntegration('openai'));

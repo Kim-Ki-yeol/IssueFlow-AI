@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">IssueFlow AI 시스템 아키텍처</title>
+  <desc id="desc">사용자 브라우저에서 Vercel의 프론트엔드와 Flask API를 사용하며, GitHub, OpenAI, Neon PostgreSQL, Discord와 연결되는 시스템 구성도.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f8fbff"/>
+      <stop offset="1" stop-color="#f3f7fb"/>
+    </linearGradient>
+    <linearGradient id="vercelFill" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f3f0ff"/>
+      <stop offset="1" stop-color="#f7f5ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#223047" flood-opacity=".08"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M1 1l9 5-9 5" fill="none" stroke="#728197" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrowStart" markerWidth="12" markerHeight="12" refX="2" refY="6" orient="auto">
+      <path d="M11 1L2 6l9 5" fill="none" stroke="#728197" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text{font-family:Inter,"Segoe UI","Noto Sans KR",Arial,sans-serif;fill:#192638}
+      .title{font-size:36px;font-weight:760;letter-spacing:-1.2px}
+      .subtitle{font-size:16px;fill:#68778a}
+      .zone-title{font-size:14px;font-weight:740;letter-spacing:1.15px;fill:#77859a}
+      .card-title{font-size:20px;font-weight:740;letter-spacing:-.4px}
+      .card-sub{font-size:13px;fill:#708096}
+      .detail{font-size:13px;fill:#53647a}
+      .micro{font-size:11px;font-weight:650;letter-spacing:.35px;fill:#6c7d92}
+      .flow-label{font-size:12px;font-weight:680;fill:#4f6075}
+      .card{fill:#fff;stroke:#e2e8f0;stroke-width:1.4}
+      .flow{fill:none;stroke:#8190a3;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+      .oauth{stroke:#8b78d2}
+      .ai-flow{stroke:#1b9a81}
+      .db-flow{stroke:#4c8fc4}
+      .notify-flow{stroke:#8b72c6}
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#page)"/>
+  <circle cx="1775" cy="60" r="230" fill="#eaf1fb" opacity=".42"/>
+  <circle cx="190" cy="1050" r="240" fill="#e8f5ef" opacity=".5"/>
+
+  <text x="58" y="66" class="title">IssueFlow AI</text>
+  <text x="60" y="98" class="subtitle">승인 기반 GitHub 이슈 관리 · AI 분석 · 사용자별 데이터 저장</text>
+  <g transform="translate(1585 46)">
+    <rect width="278" height="38" rx="19" fill="#fff" stroke="#e2e8f0"/>
+    <circle cx="20" cy="19" r="5" fill="#36a878"/>
+    <text x="36" y="24" class="micro">VERIFIED APPLICATION FLOW</text>
+  </g>
+
+  <!-- Service zones -->
+  <rect x="42" y="188" width="308" height="590" rx="22" fill="#eef6ff" stroke="#dce9f7" stroke-width="1.5"/>
+  <text x="66" y="222" class="zone-title">사용자 클라이언트</text>
+
+  <rect x="382" y="166" width="650" height="662" rx="24" fill="url(#vercelFill)" stroke="#ded8f7" stroke-width="1.6"/>
+  <g transform="translate(414 190)">
+    <path d="M17 0L34 29H0L17 0Z" fill="#111827"/>
+    <text x="48" y="14" class="zone-title" fill="#4c3d91">VERCEL · WEB APPLICATION</text>
+    <text x="48" y="34" class="card-sub">정적 프론트엔드와 서버리스 Python Function</text>
+  </g>
+
+  <rect x="1064" y="166" width="814" height="358" rx="24" fill="#f3f8ff" stroke="#dae7f5" stroke-width="1.5"/>
+  <text x="1094" y="203" class="zone-title">외부 API 서비스</text>
+  <rect x="1064" y="552" width="814" height="319" rx="24" fill="#f2f8f5" stroke="#dceae2" stroke-width="1.5"/>
+  <text x="1094" y="589" class="zone-title">데이터 저장 및 알림</text>
+
+  <!-- Flows behind cards -->
+  <path class="flow" d="M350 446H430" marker-end="url(#arrow)"/>
+  <path class="flow" d="M686 446H730" marker-end="url(#arrow)"/>
+  <path class="flow oauth" d="M325 274C508 125 914 123 1110 252" marker-start="url(#arrowStart)" marker-end="url(#arrow)"/>
+  <path class="flow" d="M975 380H1105" marker-end="url(#arrow)"/>
+  <path class="flow ai-flow" d="M975 470C1140 526 1328 524 1510 433" marker-end="url(#arrow)"/>
+  <path class="flow db-flow" d="M850 570V690H1105" marker-end="url(#arrow)"/>
+  <path class="flow notify-flow" d="M965 570C1026 922 1450 925 1640 816" marker-end="url(#arrow)"/>
+
+  <!-- Browser -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="66" y="266" width="260" height="410" rx="18"/>
+  </g>
+  <g transform="translate(156 305)">
+    <rect x="0" y="0" width="80" height="58" rx="8" fill="#e8f2ff" stroke="#4f83c2" stroke-width="2.5"/>
+    <path d="M9 12h62M9 19h62M31 58v12m18-12v12M24 70h32" fill="none" stroke="#4f83c2" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="15" cy="12" r="2" fill="#4f83c2"/>
+  </g>
+  <text x="196" y="412" text-anchor="middle" class="card-title">사용자 브라우저</text>
+  <text x="196" y="438" text-anchor="middle" class="card-sub">웹 대시보드</text>
+  <line x1="96" y1="463" x2="296" y2="463" stroke="#e8edf4"/>
+  <circle cx="104" cy="495" r="4" fill="#5c8fc9"/>
+  <text x="119" y="500" class="detail">이슈 관리 및 분석 결과 검토</text>
+  <circle cx="104" cy="533" r="4" fill="#5c8fc9"/>
+  <text x="119" y="538" class="detail">사용자 승인 후 변경 요청</text>
+  <circle cx="104" cy="571" r="4" fill="#5c8fc9"/>
+  <text x="119" y="576" class="detail">키·Webhook 직접 등록</text>
+  <rect x="93" y="613" width="205" height="34" rx="17" fill="#f0f6fd"/>
+  <text x="195" y="635" text-anchor="middle" class="micro">HTTPS · SESSION COOKIE</text>
+
+  <!-- Frontend -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="430" y="294" width="256" height="276" rx="17"/>
+  </g>
+  <rect x="452" y="316" width="42" height="42" rx="12" fill="#edf4ff"/>
+  <path d="M463 328h20v17h-20zM467 324h20v17" fill="none" stroke="#4c78b7" stroke-width="2" stroke-linejoin="round"/>
+  <text x="508" y="337" class="card-title">Frontend</text>
+  <text x="452" y="384" class="card-sub">HTML · CSS · Vanilla JavaScript</text>
+  <line x1="452" y1="401" x2="664" y2="401" stroke="#edf0f5"/>
+  <text x="452" y="431" class="detail">• 이슈 목록·상세·칸반 UI</text>
+  <text x="452" y="460" class="detail">• 분석 실행 및 적용 승인</text>
+  <text x="452" y="489" class="detail">• 사용자별 통계·설정 화면</text>
+  <text x="452" y="518" class="detail">• Flask API에 JSON 요청</text>
+  <rect x="452" y="535" width="144" height="22" rx="11" fill="#f3f6fa"/>
+  <text x="524" y="550" text-anchor="middle" class="micro">VERCEL STATIC ASSET</text>
+
+  <!-- Flask backend -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="730" y="294" width="245" height="276" rx="17"/>
+  </g>
+  <rect x="752" y="316" width="42" height="42" rx="12" fill="#eef7f1"/>
+  <g transform="translate(762 324)" fill="none" stroke="#377858" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 0v10L2 25a4 4 0 003 6h18a4 4 0 003-6l-8-15V0"/>
+    <path d="M8 0h12M7 21h14"/>
+    <circle cx="11" cy="25" r="1.4" fill="#377858" stroke="none"/>
+    <circle cx="17" cy="28" r="1.2" fill="#377858" stroke="none"/>
+  </g>
+  <text x="808" y="337" class="card-title">Flask API</text>
+  <text x="752" y="384" class="card-sub">Python · Vercel Function</text>
+  <line x1="752" y1="401" x2="953" y2="401" stroke="#edf0f5"/>
+  <text x="752" y="431" class="detail">• OAuth 세션·사용자 인증</text>
+  <text x="752" y="460" class="detail">• GitHub 및 OpenAI 요청 조정</text>
+  <text x="752" y="489" class="detail">• 승인된 변경만 외부 반영</text>
+  <text x="752" y="518" class="detail">• 통계·이력·연동 설정 API</text>
+  <rect x="752" y="535" width="145" height="22" rx="11" fill="#f3f6fa"/>
+  <text x="824" y="550" text-anchor="middle" class="micro">AUTH · BUSINESS LOGIC</text>
+
+  <!-- GitHub -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="1105" y="224" width="350" height="252" rx="18"/>
+  </g>
+  <circle cx="1155" cy="274" r="27" fill="#17191d"/>
+  <g transform="translate(1138 256)" fill="#fff">
+    <path d="M17 1C7.6 1 0 8.6 0 18c0 7.5 4.8 13.9 11.5 16.2.9.2 1.2-.4 1.2-.9v-3.2c-4.7 1-5.7-2-5.7-2-.8-1.9-1.9-2.4-1.9-2.4-1.5-1 .1-1 .1-1 1.7.1 2.6 1.7 2.6 1.7 1.5 2.6 3.9 1.9 4.9 1.5.2-1.1.6-1.9 1.1-2.4-3.8-.4-7.8-1.9-7.8-8.4 0-1.9.7-3.4 1.7-4.6-.2-.4-.7-2.2.2-4.5 0 0 1.4-.5 4.7 1.8a16.3 16.3 0 018.6 0c3.3-2.3 4.7-1.8 4.7-1.8.9 2.3.4 4.1.2 4.5 1.1 1.2 1.7 2.7 1.7 4.6 0 6.5-4 8-7.8 8.4.6.5 1.2 1.5 1.2 3.1v4.7c0 .5.3 1.1 1.2.9A17.1 17.1 0 0034 18C34 8.6 26.4 1 17 1z" transform="translate(-4 -1) scale(.98)"/>
+  </g>
+  <text x="1200" y="269" class="card-title">GitHub</text>
+  <text x="1200" y="292" class="card-sub">GitHub App OAuth · REST API</text>
+  <line x1="1130" y1="317" x2="1430" y2="317" stroke="#edf0f5"/>
+  <text x="1130" y="346" class="detail">• OAuth 로그인 및 설치 저장소 인증</text>
+  <text x="1130" y="374" class="detail">• 이슈 조회·생성·수정·담당자 관리</text>
+  <text x="1130" y="402" class="detail">• 라벨 적용 및 관리 댓글 upsert</text>
+  <rect x="1130" y="429" width="188" height="25" rx="12.5" fill="#f5f6f8"/>
+  <text x="1224" y="446" text-anchor="middle" class="micro">OAUTH · ISSUES · LABELS · COMMENTS</text>
+
+  <!-- OpenAI -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="1510" y="224" width="340" height="252" rx="18"/>
+  </g>
+  <circle cx="1560" cy="274" r="27" fill="#e9f7f2"/>
+  <g transform="translate(1544 258)" fill="none" stroke="#147b63" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16 1a8 8 0 00-7 4 8 8 0 00-6 10 8 8 0 005 9 8 8 0 0010 7 8 8 0 0011-8 8 8 0 00-2-14A8 8 0 0016 1z"/>
+    <path d="M16 1v8m0 5v17M3 15l7 4m5 3 9 5m7-14-7 4m-5 3-9 5M9 5l7 4m7-3-7 4"/>
+  </g>
+  <text x="1605" y="269" class="card-title">OpenAI</text>
+  <text x="1605" y="292" class="card-sub">LangChain · ChatOpenAI</text>
+  <line x1="1535" y1="317" x2="1825" y2="317" stroke="#edf0f5"/>
+  <text x="1535" y="346" class="detail">• 이슈 본문 기반 AI 분석</text>
+  <text x="1535" y="374" class="detail">• 분류·우선순위·요약·제안 생성</text>
+  <text x="1535" y="402" class="detail">• Pydantic 구조화 결과 반환</text>
+  <rect x="1535" y="429" width="171" height="25" rx="12.5" fill="#edf8f4"/>
+  <text x="1620" y="446" text-anchor="middle" class="micro">ANALYSIS REQUEST / RESULT</text>
+
+  <!-- Neon -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="1105" y="610" width="350" height="215" rx="18"/>
+  </g>
+  <rect x="1128" y="633" width="54" height="48" rx="13" fill="#ecf8f0"/>
+  <path d="M1142 668v-22l13 16v-18m0 18 13-17" fill="none" stroke="#22a869" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1194" y="655" class="card-title">Neon PostgreSQL</text>
+  <text x="1194" y="678" class="card-sub">Vercel 배포 환경 저장소</text>
+  <line x1="1130" y1="698" x2="1430" y2="698" stroke="#edf0f5"/>
+  <text x="1130" y="727" class="detail">• user_settings · analysis_history</text>
+  <text x="1130" y="754" class="detail">• auth_sessions (Vercel에서만)</text>
+  <text x="1130" y="790" class="micro">로컬 개발은 SQLite 사용</text>
+
+  <!-- Discord -->
+  <g filter="url(#shadow)">
+    <rect class="card" x="1510" y="610" width="340" height="215" rx="18"/>
+  </g>
+  <rect x="1533" y="633" width="54" height="48" rx="13" fill="#f0edff"/>
+  <path d="M1544 646c6-4 12-4 18 0 3 5 5 11 5 17-5 5-10 6-14 5l-2-3c3 1 5 0 7-1-7 2-13 2-20 0 2 1 4 2 7 1l-2 3c-4 1-9 0-14-5 0-6 2-12 5-17 3-2 6-3 10-3z" fill="#6254b6"/>
+  <circle cx="1550" cy="655" r="1.7" fill="#fff"/>
+  <circle cx="1561" cy="655" r="1.7" fill="#fff"/>
+  <text x="1599" y="655" class="card-title">Discord</text>
+  <text x="1599" y="678" class="card-sub">Webhook 알림</text>
+  <line x1="1535" y1="698" x2="1825" y2="698" stroke="#edf0f5"/>
+  <text x="1535" y="727" class="detail">• 승인된 GitHub 반영 이후 전송</text>
+  <text x="1535" y="754" class="detail">• 분석 요약·이슈 링크 알림</text>
+  <text x="1535" y="790" class="micro">선택 연동 · 실패 알림 재시도</text>
+
+  <!-- Flow labels -->
+  <g>
+    <rect x="345" y="415" width="85" height="24" rx="12" fill="#fff" stroke="#e6ebf2"/>
+    <text x="387" y="431" text-anchor="middle" class="flow-label">HTTPS</text>
+    <rect x="658" y="261" width="86" height="24" rx="12" fill="#fff" stroke="#e6ebf2"/>
+    <text x="701" y="277" text-anchor="middle" class="flow-label">REST / JSON</text>
+    <rect x="617" y="146" width="235" height="25" rx="12.5" fill="#fff" stroke="#e5e0f5"/>
+    <text x="734" y="163" text-anchor="middle" class="flow-label">OAuth 인증 리다이렉트 / Callback</text>
+    <rect x="990" y="350" width="103" height="24" rx="12" fill="#fff" stroke="#e6ebf2"/>
+    <text x="1041" y="366" text-anchor="middle" class="flow-label">GitHub API</text>
+    <rect x="1180" y="500" width="200" height="24" rx="12" fill="#fff" stroke="#d9eee7"/>
+    <text x="1280" y="516" text-anchor="middle" class="flow-label">이슈 문맥 · AI 분석 결과</text>
+    <rect x="939" y="652" width="164" height="24" rx="12" fill="#fff" stroke="#dceaf4"/>
+    <text x="1021" y="668" text-anchor="middle" class="flow-label">사용자별 DB 저장 / 조회</text>
+    <rect x="1220" y="884" width="231" height="24" rx="12" fill="#fff" stroke="#e6e0f4"/>
+    <text x="1335" y="900" text-anchor="middle" class="flow-label">승인 후 Discord Webhook 알림</text>
+  </g>
+
+  <!-- Legend and deployment note -->
+  <g transform="translate(58 942)">
+    <text x="0" y="0" class="zone-title">데이터 흐름 원칙</text>
+    <circle cx="18" cy="38" r="7" fill="#e4f4ea" stroke="#69a982"/>
+    <path d="M15 38l2 2 4-5" fill="none" stroke="#338457" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="34" y="42" class="detail">AI 분석은 자동 반영하지 않음</text>
+    <circle cx="288" cy="38" r="7" fill="#eef2f8" stroke="#91a0b2"/>
+    <path d="M284 38h8m-3-3 3 3-3 3" fill="none" stroke="#718198" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="304" y="42" class="detail">사용자 승인으로 GitHub 변경</text>
+    <circle cx="590" cy="38" r="7" fill="#edf4fb" stroke="#91a0b2"/>
+    <path d="M587 38h6m-3-3v6" fill="none" stroke="#718198" stroke-width="1.5" stroke-linecap="round"/>
+    <text x="606" y="42" class="detail">기록 초기화는 사용자 DB 이력만 대상</text>
+  </g>
+  <g transform="translate(1190 942)">
+    <rect width="670" height="56" rx="14" fill="#fff" stroke="#e2e8f0"/>
+    <circle cx="25" cy="28" r="5" fill="#38a875"/>
+    <text x="42" y="25" class="micro">운영</text>
+    <text x="42" y="42" class="detail">Vercel Function ↔ Neon PostgreSQL</text>
+    <circle cx="359" cy="28" r="5" fill="#7398cc"/>
+    <text x="376" y="25" class="micro">개발</text>
+    <text x="376" y="42" class="detail">로컬 Flask ↔ SQLite</text>
+  </g>
+  <text x="58" y="1040" class="micro">IssueFlow AI · Architecture · 실제 코드 경로 기준</text>
+  <text x="1860" y="1040" text-anchor="end" class="micro">GitHub · Vercel · Flask · OpenAI · Neon · Discord</text>
+</svg>
