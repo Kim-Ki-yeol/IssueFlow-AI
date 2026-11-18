@@ -32,6 +32,230 @@ function escapeHtml(value) {
   }[c]));
 }
 
+function markdownDisplaySource(value) {
+  // Hide only IssueFlow's own leading analysis payload; keep the original string
+  // untouched for analysis recovery and for editing the raw GitHub comment.
+  return String(value ?? '')
+    .replace(/<!--\s*issueflow-ai:analysis:v1\s+[\s\S]*?-->/g, '');
+}
+
+function appendMarkdownInline(parent, source, depth = 0) {
+  const text = String(source ?? '');
+  if (depth > 12) {
+    parent.appendChild(document.createTextNode(text));
+    return;
+  }
+  let index = 0;
+  const appendText = value => {
+    if (value) parent.appendChild(document.createTextNode(value));
+  };
+  const safeHref = value => {
+    try {
+      const url = new URL(value, window.location.href);
+      return ['https:', 'http:', 'mailto:'].includes(url.protocol)
+        && !url.username && !url.password ? url.href : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const appendLink = (label, href) => {
+    const safe = safeHref(href);
+    if (!safe) {
+      appendText(`[${label}](${href})`);
+      return;
+    }
+    const anchor = document.createElement('a');
+    anchor.href = safe;
+    anchor.rel = 'noopener noreferrer';
+    anchor.target = '_blank';
+    appendTextToInline(anchor, label);
+    parent.appendChild(anchor);
+  };
+
+  while (index < text.length) {
+    // Inline code. Variable-size backtick delimiters follow Markdown semantics.
+    if (text[index] === '`') {
+      const run = text.slice(index).match(/^`+/)[0];
+      const end = text.indexOf(run, index + run.length);
+      if (end >= 0) {
+        const code = document.createElement('code');
+        code.textContent = text.slice(index + run.length, end).replace(/\n/g, ' ');
+        parent.appendChild(code);
+        index = end + run.length;
+        continue;
+      }
+    }
+
+    // Markdown links; unsafe protocols are rendered as inert text.
+    if (text[index] === '[') {
+      const labelEnd = text.indexOf('](', index + 1);
+      const hrefEnd = labelEnd >= 0 ? text.indexOf(')', labelEnd + 2) : -1;
+      if (labelEnd >= 0 && hrefEnd >= 0) {
+        appendLink(
+          text.slice(index + 1, labelEnd),
+          text.slice(labelEnd + 2, hrefEnd).trim().replace(/^<|>$/g, '')
+        );
+        index = hrefEnd + 1;
+        continue;
+      }
+    }
+
+    let delimiter = null;
+    let tagName = null;
+    if (text.startsWith('**', index) || text.startsWith('__', index)) {
+      delimiter = text.slice(index, index + 2);
+      tagName = 'strong';
+    } else if (text[index] === '*' || text[index] === '_') {
+      delimiter = text[index];
+      tagName = 'em';
+    }
+    if (delimiter) {
+      const end = text.indexOf(delimiter, index + delimiter.length);
+      if (end > index + delimiter.length) {
+        const node = document.createElement(tagName);
+        appendMarkdownInline(node, text.slice(index + delimiter.length, end), depth + 1);
+        parent.appendChild(node);
+        index = end + delimiter.length;
+        continue;
+      }
+    }
+
+    // Plain URLs are convenient in issue comments; trim punctuation from links.
+    const bareUrl = text.slice(index).match(/^https?:\/\/[^\s<]+/);
+    if (bareUrl) {
+      const match = bareUrl[0];
+      const url = match.replace(/[.,!?;:]+$/, '');
+      appendLink(url, url);
+      appendText(match.slice(url.length));
+      index += match.length;
+      continue;
+    }
+
+    // Move to the next possible token while keeping all source text as text nodes.
+    let next = text.length;
+    for (const candidate of ['`', '[', '*', '_', 'http://', 'https://']) {
+      const found = text.indexOf(candidate, index + 1);
+      if (found >= 0 && found < next) next = found;
+    }
+    appendText(text.slice(index, next));
+    index = next;
+  }
+}
+
+function appendTextToInline(parent, value) {
+  // Link labels remain text-only, preventing nested markup and HTML injection.
+  parent.appendChild(document.createTextNode(String(value ?? '')));
+}
+
+function markdownBlockStart(line) {
+  return /^ {0,3}(?:#{1,6}\s|```|~~~|>\s?|(?:[-+*]|\d+\.)\s|(?:---+|___+|\*\*\*+)\s*$)/.test(line);
+}
+
+function appendMarkdownBlocks(container, rawLines, depth = 0) {
+  if (depth > 8) {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = rawLines.join('\n');
+    container.appendChild(paragraph);
+    return;
+  }
+  const lines = rawLines;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index++;
+      continue;
+    }
+
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})([A-Za-z0-9_+.-]*)\s*$/);
+    if (fence) {
+      const marker = fence[1];
+      const body = [];
+      index++;
+      while (index < lines.length && !new RegExp(`^ {0,3}${marker[0]}{${marker.length},}\\s*$`).test(lines[index])) {
+        body.push(lines[index++]);
+      }
+      if (index < lines.length) index++;
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      if (fence[2]) code.className = `language-${fence[2]}`;
+      code.textContent = body.join('\n');
+      pre.appendChild(code);
+      container.appendChild(pre);
+      continue;
+    }
+
+    const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const element = document.createElement(`h${heading[1].length}`);
+      appendMarkdownInline(element, heading[2]);
+      container.appendChild(element);
+      index++;
+      continue;
+    }
+
+    if (/^ {0,3}>\s?/.test(line)) {
+      const quoted = [];
+      while (index < lines.length && /^ {0,3}>\s?/.test(lines[index])) {
+        quoted.push(lines[index++].replace(/^ {0,3}>\s?/, ''));
+      }
+      const quote = document.createElement('blockquote');
+      appendMarkdownBlocks(quote, quoted, depth + 1);
+      container.appendChild(quote);
+      continue;
+    }
+
+    if (/^ {0,3}(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+      container.appendChild(document.createElement('hr'));
+      index++;
+      continue;
+    }
+
+    const listStart = line.match(/^ {0,3}([-+*]|\d+\.)\s+(.+)$/);
+    if (listStart) {
+      const ordered = /^\d/.test(listStart[1]);
+      const list = document.createElement(ordered ? 'ol' : 'ul');
+      const pattern = ordered ? /^ {0,3}\d+\.\s+(.+)$/ : /^ {0,3}[-+*]\s+(.+)$/;
+      while (index < lines.length) {
+        const item = lines[index].match(pattern);
+        if (!item) break;
+        const li = document.createElement('li');
+        appendMarkdownInline(li, item[1]);
+        list.appendChild(li);
+        index++;
+      }
+      container.appendChild(list);
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim() && !markdownBlockStart(lines[index])) {
+      paragraphLines.push(lines[index++]);
+    }
+    if (!paragraphLines.length) {
+      // Unknown Markdown constructs remain visible as inert text.
+      paragraphLines.push(lines[index++]);
+    }
+    const paragraph = document.createElement('p');
+    paragraphLines.forEach((paragraphLine, lineIndex) => {
+      const hardBreak = /(?: {2,}|\\)$/.test(paragraphLine);
+      appendMarkdownInline(paragraph, paragraphLine.replace(/(?: {2,}|\\)$/, ''));
+      if (lineIndex < paragraphLines.length - 1) {
+        if (hardBreak) paragraph.appendChild(document.createElement('br'));
+        else paragraph.appendChild(document.createTextNode(' '));
+      }
+    });
+    container.appendChild(paragraph);
+  }
+}
+
+function renderMarkdown(source) {
+  const root = document.createElement('div');
+  root.className = 'markdown-body';
+  appendMarkdownBlocks(root, markdownDisplaySource(source).replace(/\r\n?/g, '\n').split('\n'));
+  return root;
+}
+
 function safeGithubUrl(value) {
   const url = String(value || '');
   return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(issues|pull)\/\d+$/.test(url)
@@ -1007,7 +1231,7 @@ function drawDetail(issue) {
         </div>
         <div class="analysis-detail">
           <h4>GitHub 댓글 미리보기</h4>
-          <div class="detail-body">${escapeHtml(analysis.comment_preview || analysis.summary || '-')}</div>
+          <div id="analysisCommentPreview" class="detail-body markdown-preview"></div>
         </div>
         ${issue.analysis_comparison && Object.keys(issue.analysis_comparison).length
           ? `<div class="analysis-detail"><h4>이전 분석과 달라진 항목</h4><ul>${
@@ -1081,6 +1305,11 @@ function drawDetail(issue) {
       ${analysisHtml}
     </div>
   `;
+
+  const preview = $('#analysisCommentPreview');
+  if (preview) preview.appendChild(renderMarkdown(
+    analysis.comment_preview || analysis.summary || '-'
+  ));
 
   const link = safeGithubUrl(issue.html_url);
   $('#drawerGithub').hidden = !link;
@@ -1169,26 +1398,47 @@ async function loadComments(number) {
     const result = await api(`/api/issues/${number}/comments`);
     if (state.selected !== number) return;
     const parent = $('#issueComments');
-    parent.innerHTML = result.items.length ? result.items.map(comment => `
-      <article class="issue-comment">
-        <div><strong>${escapeHtml(comment.user || 'GitHub 사용자')}</strong><small>${escapeHtml(formatDate(comment.created_at))}</small></div>
-        <p>${escapeHtml(comment.body)}</p>
-        <div class="comment-actions">
-          <button type="button" class="btn btn-outline btn-sm" data-edit-comment="${Number(comment.id)}">수정</button>
-          <button type="button" class="btn btn-outline btn-sm" data-delete-comment="${Number(comment.id)}">삭제</button>
-        </div>
-      </article>
-    `).join('') : '<p class="subtle-empty">등록된 댓글이 없습니다.</p>';
-    $$('[data-edit-comment]').forEach(button => button.addEventListener('click', () => {
-      const item = result.items.find(value => value.id === Number(button.dataset.editComment));
-      if (item) editIssueComment(number, item);
-    }));
-    $$('[data-delete-comment]').forEach(button => button.addEventListener('click', () => {
-      deleteIssueComment(number, Number(button.dataset.deleteComment));
-    }));
+    parent.replaceChildren();
+    if (!result.items.length) {
+      const empty = document.createElement('p');
+      empty.className = 'subtle-empty';
+      empty.textContent = '등록된 댓글이 없습니다.';
+      parent.appendChild(empty);
+      return;
+    }
+    result.items.forEach(comment => parent.appendChild(createCommentCard(number, comment)));
   } catch (error) {
     if (state.selected === number) $('#issueComments').textContent = error.message;
   }
+}
+
+function createCommentCard(number, comment) {
+  const article = document.createElement('article');
+  article.className = 'issue-comment';
+  const header = document.createElement('div');
+  header.className = 'issue-comment-header';
+  const author = document.createElement('strong');
+  author.textContent = comment.user || 'GitHub 사용자';
+  const date = document.createElement('small');
+  date.textContent = formatDate(comment.created_at);
+  header.append(author, date);
+  article.append(header, renderMarkdown(comment.body));
+
+  const actions = document.createElement('div');
+  actions.className = 'comment-actions';
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'btn btn-outline btn-sm';
+  edit.textContent = '수정';
+  edit.addEventListener('click', () => editIssueComment(number, comment, article));
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-outline btn-sm';
+  remove.textContent = '삭제';
+  remove.addEventListener('click', () => deleteIssueComment(number, Number(comment.id)));
+  actions.append(edit, remove);
+  article.appendChild(actions);
+  return article;
 }
 
 async function createIssueComment(event) {
@@ -1207,18 +1457,67 @@ async function createIssueComment(event) {
   }
 }
 
-async function editIssueComment(number, comment) {
-  const body = window.prompt('댓글 내용을 수정하세요.', comment.body);
-  if (body === null || !body.trim()) return;
-  try {
-    await api(`/api/issues/${number}/comments/${comment.id}`, {
-      method: 'PATCH', body: JSON.stringify({ body: body.trim() })
-    });
-    toast('댓글을 수정했습니다.');
-    await loadComments(number);
-  } catch (error) {
-    toast(error.message, 'error');
-  }
+function splitAnalysisMetadata(rawBody) {
+  const raw = String(rawBody ?? '');
+  const prefix = raw.match(
+    /^(<!--\s*issueflow-ai:analysis:v1\s+\{[^\r\n]*\}\s*-->)(\r?\n)?/
+  );
+  return prefix
+    ? { metadataPrefix: prefix[0], editableBody: raw.slice(prefix[0].length) }
+    : { metadataPrefix: '', editableBody: raw };
+}
+
+function editIssueComment(number, comment, article) {
+  const { metadataPrefix, editableBody } = splitAnalysisMetadata(comment.body);
+  const editor = document.createElement('div');
+  editor.className = 'comment-editor';
+
+  const textarea = document.createElement('textarea');
+  textarea.className = 'comment-editor-source';
+  textarea.setAttribute('aria-label', 'Markdown 댓글 작성');
+  textarea.spellcheck = false;
+  textarea.value = editableBody;
+
+  const actions = document.createElement('div');
+  actions.className = 'comment-editor-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-outline btn-sm';
+  cancel.textContent = '취소';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn btn-primary btn-sm';
+  save.textContent = '저장';
+  actions.append(cancel, save);
+  editor.append(textarea, actions);
+  article.replaceChildren(editor);
+  textarea.focus();
+
+  cancel.addEventListener('click', () => {
+    // Discard only the local editor buffer. No GitHub request is made.
+    article.replaceWith(createCommentCard(number, comment));
+  });
+  save.addEventListener('click', async () => {
+    if (!metadataPrefix && !textarea.value.trim()) {
+      toast('댓글 내용을 입력해 주세요.', 'error');
+      return;
+    }
+    save.disabled = true;
+    try {
+      // Keep IssueFlow's hidden JSON marker byte-for-byte so existing analysis
+      // history recovery continues to work after editing the visible Markdown.
+      const body = metadataPrefix + textarea.value;
+      await api(`/api/issues/${number}/comments/${comment.id}`, {
+        method: 'PATCH', body: JSON.stringify({ body })
+      });
+      toast('댓글을 수정했습니다.');
+      await loadComments(number);
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      save.disabled = false;
+    }
+  });
 }
 
 async function deleteIssueComment(number, commentId) {

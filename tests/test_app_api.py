@@ -68,7 +68,10 @@ class SettingsApiTests(unittest.TestCase):
 
             def list_comments(self, number):
                 self.calls.append(("comments", number))
-                return [{"id": 77, "body": "old"}]
+                return [{
+                    "id": 77,
+                    "body": '<!-- issueflow-ai:analysis:v1 {"category":"bug"} -->\n## AI 분석',
+                }]
 
             def create_comment(self, number, body):
                 self.calls.append(("comment", number, body))
@@ -89,15 +92,26 @@ class SettingsApiTests(unittest.TestCase):
             created = self.client.post("/api/issues", json={"title": "Test", "body": "Body"})
             edited = self.client.patch("/api/issues/8", json={"title": "Updated"})
             comment = self.client.post("/api/issues/8/comments", json={"body": "Hello"})
+            metadata = '<!-- issueflow-ai:analysis:v1 {"category":"bug"} -->\n'
+            edited_markdown = "## Updated Markdown  \n\n- detail\n\n"
+            edited_comment = self.client.patch(
+                "/api/issues/8/comments/77",
+                json={"body": metadata + edited_markdown},
+            )
             deleted = self.client.delete("/api/issues/8/comments/77", json={})
 
         self.assertEqual(created.status_code, 201)
         self.assertEqual(edited.status_code, 200)
         self.assertEqual(comment.status_code, 201)
+        self.assertEqual(edited_comment.status_code, 200)
         self.assertEqual(deleted.status_code, 200)
         self.assertIn(("create", "Test", "Body"), fake.calls)
         self.assertIn(("update", 8, {"title": "Updated"}), fake.calls)
         self.assertIn(("delete-comment", 77), fake.calls)
+        self.assertIn(
+            ("edit-comment", 77, metadata + edited_markdown),
+            fake.calls,
+        )
 
     def test_repository_initial_setup_never_overwrites_existing_labels_or_templates(self):
         class Response:

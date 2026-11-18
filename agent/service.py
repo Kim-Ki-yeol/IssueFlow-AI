@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from .analyzer import analyze_issue
+from .analyzer import analysis_comment_markdown, analyze_issue
 from .config import Config
 from .github_client import COMMENT_MARKER, GitHubClient
 from .notifier import send_discord
@@ -82,20 +82,10 @@ class Service:
 
     @staticmethod
     def comment(analysis: dict) -> str:
-        # JSON은 나중에 대시보드에서 결과를 다시 표시할 때 사용
+        # Preserve the JSON marker for analysis recovery; only the Markdown body is user-facing.
         data = json.dumps(analysis, ensure_ascii=False, separators=(",", ":")).replace("-->", "--\\u003e")
-        tips = "\n".join(f"{index}. {item}" for index, item in enumerate(analysis["suggestions"], start=1))
-        return (
-            f"{COMMENT_MARKER}{data} -->\n"
-            "## IssueFlow AI 분석 결과\n\n"
-            f"- **분류:** `{analysis['category']}`\n"
-            f"- **우선순위:** `{analysis['priority']}`\n"
-            f"- **관련 영역:** {analysis['area']}\n\n"
-            f"**요약:** {analysis['summary']}\n\n"
-            f"**추정 원인:** {analysis['probable_cause']}\n\n"
-            f"**권장 점검:**\n{tips}\n\n"
-            "> AI 분석은 추정이므로 실제 코드와 로그를 확인해야 합니다."
-        )
+        markdown = analysis.get("comment_preview") or analysis_comment_markdown(analysis)
+        return f"{COMMENT_MARKER}{data} -->\n{markdown}"
 
     def run(self, number: int, force: bool = False) -> dict:
         """Backward-compatible manual analysis entry point; never writes externally."""

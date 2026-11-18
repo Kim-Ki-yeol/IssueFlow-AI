@@ -863,8 +863,9 @@ def create_app() -> Flask:
     def update_issue_comment(number: int, comment_id: int):
         service = current_service()
         verify_issue_comment(service, number, comment_id)
-        text = str((request.get_json(silent=True) or {}).get("body") or "").strip()
-        if not text or len(text) > 65536:
+        # Preserve Markdown-significant whitespace exactly; only use strip for validation.
+        text = str((request.get_json(silent=True) or {}).get("body") or "")
+        if not text.strip() or len(text) > 65536:
             raise ValueError("댓글은 1~65,536자로 입력해 주세요.")
         return jsonify({"item": service.update_comment(comment_id, text)})
 
