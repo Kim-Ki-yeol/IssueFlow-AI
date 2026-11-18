@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import atexit
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,11 +15,86 @@ from cryptography.fernet import Fernet, InvalidToken
 from .config import ROOT
 
 
+_POOL = None
+_POOL_URL = None
+_POOL_LOCK = threading.Lock()
+
+
+def database_backend() -> str:
+    """Use Neon only in Vercel; local development always keeps its SQLite file."""
+    if os.getenv("VERCEL", "").strip() == "1":
+        if not os.getenv("DATABASE_URL", "").strip():
+            raise RuntimeError("Vercel 배포 환경에는 DATABASE_URL 설정이 필요합니다.")
+        return "postgres"
+    return "sqlite"
+
+
+def persistent_sessions_enabled() -> bool:
+    return database_backend() == "postgres"
+
+
 def database_path() -> Path:
     configured = os.getenv("ISSUEFLOW_DATABASE_PATH", "").strip()
     path = Path(configured) if configured else ROOT / "instance" / "issueflow.sqlite3"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+class _PostgresConnection:
+    """Small adapter for the existing SQLite-style qmark statements."""
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, query: str, parameters=()):
+        return self._connection.execute(query.replace("?", "%s"), parameters)
+
+
+def _postgres_pool():
+    global _POOL, _POOL_URL
+    url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError("Vercel 배포 환경에는 DATABASE_URL 설정이 필요합니다.")
+    with _POOL_LOCK:
+        if _POOL is not None and _POOL_URL == url:
+            return _POOL
+        if _POOL is not None:
+            _POOL.close()
+            _POOL = None
+            _POOL_URL = None
+        try:
+            from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
+
+            pool = ConnectionPool(
+                conninfo=url,
+                min_size=0,
+                max_size=3,
+                timeout=10,
+                max_lifetime=300,
+                max_idle=60,
+                kwargs={"row_factory": dict_row},
+                open=False,
+            )
+            pool.open(wait=False)
+        except Exception:
+            raise RuntimeError("Neon PostgreSQL 연결 풀을 초기화하지 못했습니다.") from None
+        _POOL = pool
+        _POOL_URL = url
+        return _POOL
+
+
+def close_pool() -> None:
+    """Close the per-instance pool at process shutdown, not per request."""
+    global _POOL, _POOL_URL
+    with _POOL_LOCK:
+        if _POOL is not None:
+            _POOL.close()
+            _POOL = None
+            _POOL_URL = None
+
+
+atexit.register(close_pool)
 
 
 def _cipher() -> Fernet:
@@ -33,6 +111,12 @@ def _cipher() -> Fernet:
 
 @contextmanager
 def connect():
+    if database_backend() == "postgres":
+        pool = _postgres_pool()
+        with pool.connection() as connection:
+            yield _PostgresConnection(connection)
+        return
+
     db = sqlite3.connect(database_path(), timeout=10)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA busy_timeout = 10000")
@@ -48,6 +132,61 @@ def connect():
 
 
 def init_db() -> None:
+    if database_backend() == "postgres":
+        _cipher()  # The same key encrypts user settings and OAuth access tokens.
+        try:
+            with connect() as db:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS user_settings (
+                        user_id TEXT PRIMARY KEY,
+                        openai_key BYTEA,
+                        discord_webhook BYTEA,
+                        selected_repo TEXT NOT NULL DEFAULT '',
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS analysis_history (
+                        id BIGSERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        repository TEXT NOT NULL,
+                        issue_number INTEGER NOT NULL,
+                        issue_title TEXT NOT NULL DEFAULT '',
+                        analysis_json TEXT,
+                        analysis_status TEXT NOT NULL,
+                        github_status TEXT NOT NULL DEFAULT 'pending',
+                        github_result_json TEXT,
+                        discord_status TEXT NOT NULL DEFAULT 'not_sent',
+                        error TEXT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_analysis_owner_repo
+                    ON analysis_history(user_id, repository, created_at DESC)
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS auth_sessions (
+                        sid TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        encrypted_token BYTEA NOT NULL,
+                        user_json TEXT NOT NULL,
+                        expires_at DOUBLE PRECISION NOT NULL,
+                        selected_repo TEXT NOT NULL DEFAULT '',
+                        installation_id BIGINT NOT NULL DEFAULT 0,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry
+                    ON auth_sessions(expires_at)
+                """)
+        except RuntimeError:
+            raise
+        except Exception:
+            raise RuntimeError("PostgreSQL 스키마 초기화에 실패했습니다.") from None
+        return
+
     with connect() as db:
         db.executescript("""
             CREATE TABLE IF NOT EXISTS user_settings (
@@ -134,20 +273,95 @@ def setting_status(user_id: object) -> dict:
     }
 
 
+def save_login_session(
+    sid: str, user: dict, token: str, expires_at: float,
+    repo: str = "", installation_id: int = 0,
+) -> None:
+    """Persist a server-side OAuth session with the access token encrypted."""
+    sid = str(sid or "").strip()
+    if not sid or len(sid) > 200 or not token:
+        raise ValueError("로그인 세션 정보가 올바르지 않습니다.")
+    encrypted = _cipher().encrypt(token.encode("utf-8"))
+    with connect() as db:
+        db.execute("""
+            INSERT INTO auth_sessions
+                (sid, user_id, encrypted_token, user_json, expires_at, selected_repo, installation_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sid) DO UPDATE SET
+                user_id = excluded.user_id,
+                encrypted_token = excluded.encrypted_token,
+                user_json = excluded.user_json,
+                expires_at = excluded.expires_at,
+                selected_repo = excluded.selected_repo,
+                installation_id = excluded.installation_id,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            sid, _owner(user.get("id")), encrypted,
+            json.dumps(user, ensure_ascii=False), float(expires_at),
+            str(repo or ""), int(installation_id or 0),
+        ))
+
+
+def load_login_session(sid: str) -> dict | None:
+    sid = str(sid or "").strip()
+    if not sid or len(sid) > 200:
+        return None
+    with connect() as db:
+        row = db.execute(
+            "SELECT * FROM auth_sessions WHERE sid = ?", (sid,)
+        ).fetchone()
+    if row is None:
+        return None
+    if float(row["expires_at"]) <= time.time():
+        delete_login_session(sid)
+        return None
+    try:
+        token = _cipher().decrypt(row["encrypted_token"]).decode("utf-8")
+        user = json.loads(row["user_json"])
+    except (InvalidToken, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "저장된 로그인 세션을 복호화할 수 없습니다. DATA_ENCRYPTION_KEY를 확인해 주세요."
+        ) from exc
+    return {
+        "token": token,
+        "user": user,
+        "expires_at": float(row["expires_at"]),
+        "repo": row["selected_repo"],
+        "installation_id": int(row["installation_id"]),
+    }
+
+
+def delete_login_session(sid: str) -> None:
+    if not sid:
+        return
+    with connect() as db:
+        db.execute("DELETE FROM auth_sessions WHERE sid = ?", (str(sid),))
+
+
+def delete_expired_login_sessions() -> None:
+    with connect() as db:
+        db.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (time.time(),))
+
+
 def save_analysis(
     user_id: object, repo: str, issue_number: int, issue_title: str,
     analysis: dict | None, status: str, error: str | None = None,
 ) -> int:
+    query = """
+        INSERT INTO analysis_history
+            (user_id, repository, issue_number, issue_title, analysis_json, analysis_status, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    if database_backend() == "postgres":
+        query += " RETURNING id"
     with connect() as db:
-        cursor = db.execute("""
-            INSERT INTO analysis_history
-                (user_id, repository, issue_number, issue_title, analysis_json, analysis_status, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
+        cursor = db.execute(query, (
             _owner(user_id), repo, issue_number, issue_title,
             json.dumps(analysis, ensure_ascii=False) if analysis is not None else None,
             status, (error or "")[:500] or None,
         ))
+        if database_backend() == "postgres":
+            return int(cursor.fetchone()["id"])
         return int(cursor.lastrowid)
 
 
@@ -192,11 +406,16 @@ def history(user_id: object, repo: str, issue_number: int | None = None) -> list
     query += " ORDER BY id DESC LIMIT 100"
     with connect() as db:
         rows = db.execute(query, args).fetchall()
-    return [{
-        **dict(row),
-        "analysis": json.loads(row["analysis_json"]) if row["analysis_json"] else None,
-        "github_result": json.loads(row["github_result_json"]) if row["github_result_json"] else None,
-    } for row in rows]
+    items = []
+    for row in rows:
+        item = dict(row)
+        created_at = item.get("created_at")
+        if hasattr(created_at, "isoformat"):
+            item["created_at"] = created_at.isoformat()
+        item["analysis"] = json.loads(row["analysis_json"]) if row["analysis_json"] else None
+        item["github_result"] = json.loads(row["github_result_json"]) if row["github_result_json"] else None
+        items.append(item)
+    return items
 
 
 def statistics(user_id: object, repo: str) -> dict:

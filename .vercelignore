@@ -6,3 +6,7 @@ tests
 .env.*
 !.env.example
 RUN_WINDOWS.bat
+instance
+*.sqlite3
+*.sqlite3-*
+__pycache__

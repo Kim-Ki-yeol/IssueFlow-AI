@@ -43,13 +43,16 @@ from agent.github_client import GitHubError
 from agent.service import Service
 from agent.notifier import send_discord
 from agent.storage import (
-    get_settings, history as get_history, init_db, save_analysis,
+    delete_expired_login_sessions, delete_login_session,
+    get_settings, history as get_history, init_db, load_login_session,
+    persistent_sessions_enabled, save_analysis, save_login_session,
     save_settings, setting_status, statistics, update_analysis,
 )
 
 
 ROOT = Path(__file__).resolve().parent
 SESSION_LIFETIME = 8 * 60 * 60
+OAUTH_CALLBACK_PATH = "/auth/github/callback"
 
 
 @dataclass
@@ -73,6 +76,9 @@ SESSION_LOCK = threading.Lock()
 # 만료된 로그인 정보 정리
 def clean_sessions():
     now = time.time()
+    if persistent_sessions_enabled():
+        delete_expired_login_sessions()
+        return
 
     with SESSION_LOCK:
         for sid, data in list(LOGIN_SESSIONS.items()):
@@ -86,6 +92,13 @@ def get_login_session() -> LoginSession | None:
 
     if not sid:
         return None
+
+    if persistent_sessions_enabled():
+        data = load_login_session(sid)
+        if data is None:
+            session.pop("sid", None)
+            return None
+        return LoginSession(**data)
 
     with SESSION_LOCK:
         data = LOGIN_SESSIONS.get(sid)
@@ -114,6 +127,37 @@ def require_login() -> LoginSession:
     return data
 
 
+def validate_oauth_redirect_uri(uri: str, *, require_https: bool = False) -> str:
+    parsed = urlsplit(uri)
+    schemes = {"https"} if require_https else {"http", "https"}
+    if (
+        parsed.scheme not in schemes
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path != OAUTH_CALLBACK_PATH
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("GITHUB_OAUTH_REDIRECT_URI 형식이 올바르지 않습니다.")
+    return uri
+
+
+def oauth_redirect_uri() -> str:
+    """Resolve a stable, environment-appropriate OAuth callback URL."""
+    is_vercel = os.getenv("VERCEL", "").strip() == "1"
+    configured = os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
+    if configured:
+        return validate_oauth_redirect_uri(configured, require_https=is_vercel)
+    if is_vercel:
+        raise RuntimeError(
+            "Vercel 환경에는 GITHUB_OAUTH_REDIRECT_URI를 설정해야 합니다."
+        )
+    return validate_oauth_redirect_uri(
+        url_for("github_callback", _external=True),
+    )
+
+
 def create_app() -> Flask:
     app = Flask(
         __name__,
@@ -122,6 +166,14 @@ def create_app() -> Flask:
     )
 
     github_cfg = get_github_app_config()
+    is_vercel = os.getenv("VERCEL", "").strip() == "1"
+    if is_vercel and not github_cfg.flask_secret_key:
+        raise RuntimeError("Vercel 환경에는 고정된 FLASK_SECRET_KEY 설정이 필요합니다.")
+    if is_vercel and not os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip():
+        raise RuntimeError("Vercel 환경에는 GITHUB_OAUTH_REDIRECT_URI 설정이 필요합니다.")
+    configured_redirect = os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
+    if configured_redirect:
+        validate_oauth_redirect_uri(configured_redirect, require_https=is_vercel)
 
     # Flask 세션 암호화에 사용할 키 설정
     app.secret_key = (
@@ -133,8 +185,9 @@ def create_app() -> Flask:
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=(
-            os.getenv("COOKIE_SECURE", "false").lower() == "true"
+            is_vercel or os.getenv("COOKIE_SECURE", "false").lower() == "true"
         ),
+        PERMANENT_SESSION_LIFETIME=SESSION_LIFETIME,
         MAX_CONTENT_LENGTH=32 * 1024,
     )
     init_db()
@@ -279,9 +332,11 @@ def create_app() -> Flask:
     # GitHub 로그인 시작
     @app.get("/auth/github")
     def github_login():
-        url, state = create_login_url()
+        redirect_uri = oauth_redirect_uri()
+        url, state = create_login_url(redirect_uri)
 
         session["oauth_state"] = state
+        session["oauth_redirect_uri"] = redirect_uri
 
         return redirect(url)
 
@@ -289,6 +344,7 @@ def create_app() -> Flask:
     @app.get("/auth/github/callback")
     def github_callback():
         expected = session.pop("oauth_state", None)
+        redirect_uri = session.pop("oauth_redirect_uri", None)
         received = request.args.get("state", "")
         code = request.args.get("code", "")
 
@@ -302,7 +358,7 @@ def create_app() -> Flask:
             )
 
         # GitHub 인증 코드를 토큰으로 교환
-        token = exchange_code(code)
+        token = exchange_code(code, redirect_uri=redirect_uri or oauth_redirect_uri())
         user = get_current_user(token)
         saved = get_settings(user.get("id"))
         restored_repo, restored_installation = saved["selected_repo"], 0
@@ -321,20 +377,30 @@ def create_app() -> Flask:
         old_sid = session.get("sid")
 
         if old_sid:
-            with SESSION_LOCK:
-                LOGIN_SESSIONS.pop(old_sid, None)
+            if persistent_sessions_enabled():
+                delete_login_session(old_sid)
+            else:
+                with SESSION_LOCK:
+                    LOGIN_SESSIONS.pop(old_sid, None)
 
         sid = secrets.token_urlsafe(32)
 
-        # 로그인 정보를 서버에 저장
-        with SESSION_LOCK:
-            LOGIN_SESSIONS[sid] = LoginSession(
-                token=token,
-                user=user,
-                expires_at=time.time() + SESSION_LIFETIME,
-                repo=restored_repo,
-                installation_id=restored_installation,
+        # Store OAuth tokens only on the server; Vercel uses encrypted persistent sessions.
+        login_data = LoginSession(
+            token=token,
+            user=user,
+            expires_at=time.time() + SESSION_LIFETIME,
+            repo=restored_repo,
+            installation_id=restored_installation,
+        )
+        if persistent_sessions_enabled():
+            save_login_session(
+                sid, user, token, login_data.expires_at,
+                restored_repo, restored_installation,
             )
+        else:
+            with SESSION_LOCK:
+                LOGIN_SESSIONS[sid] = login_data
 
         session.clear()
         session["sid"] = sid
@@ -497,6 +563,11 @@ def create_app() -> Flask:
         with login.lock:
             login.repo = repo
             login.installation_id = installation_id
+        if persistent_sessions_enabled():
+            save_login_session(
+                session.get("sid"), login.user, login.token, login.expires_at,
+                repo, installation_id,
+            )
         saved = get_settings(login.user.get("id"))
         save_settings(
             login.user.get("id"), saved["openai_api_key"],
@@ -679,8 +750,11 @@ def create_app() -> Flask:
 
         # 서버에 저장된 로그인 정보 삭제
         if sid:
-            with SESSION_LOCK:
-                LOGIN_SESSIONS.pop(sid, None)
+            if persistent_sessions_enabled():
+                delete_login_session(sid)
+            else:
+                with SESSION_LOCK:
+                    LOGIN_SESSIONS.pop(sid, None)
 
         # 브라우저의 Flask 세션 초기화
         session.clear()

@@ -20,7 +20,7 @@ class GitHubAuthError(RuntimeError):
     """GitHub 인증 과정에서 발생한 오류."""
 
 
-def create_login_url() -> tuple[str, str]:
+def create_login_url(redirect_uri: str | None = None) -> tuple[str, str]:
     """GitHub 로그인 주소와 CSRF 방지용 state 생성."""
 
     cfg = get_github_app_config()
@@ -36,13 +36,15 @@ def create_login_url() -> tuple[str, str]:
         "client_id": cfg.client_id,
         "state": state,
     }
+    if redirect_uri:
+        params["redirect_uri"] = redirect_uri
 
     url = f"{GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
 
     return url, state
 
 
-def exchange_code(code: str) -> str:
+def exchange_code(code: str, redirect_uri: str | None = None) -> str:
     """GitHub에서 받은 인증 코드를 사용자 토큰으로 교환."""
 
     cfg = get_github_app_config()
@@ -56,17 +58,20 @@ def exchange_code(code: str) -> str:
         raise GitHubAuthError("GitHub 인증 코드가 없습니다.")
 
     try:
+        token_data = {
+            "client_id": cfg.client_id,
+            "client_secret": cfg.client_secret,
+            "code": code,
+        }
+        if redirect_uri:
+            token_data["redirect_uri"] = redirect_uri
         response = requests.post(
             GITHUB_TOKEN_URL,
             headers={
                 "Accept": "application/json",
                 "User-Agent": "IssueFlow-AI",
             },
-            data={
-                "client_id": cfg.client_id,
-                "client_secret": cfg.client_secret,
-                "code": code,
-            },
+            data=token_data,
             timeout=15,
         )
         response.raise_for_status()

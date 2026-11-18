@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -17,6 +18,7 @@ class SettingsApiTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {
             "ISSUEFLOW_DATABASE_PATH": os.path.join(self.temp.name, "api.sqlite3"),
             "DATA_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+            "VERCEL": "",
         })
         self.env.start()
         self.flask_app = app_module.create_app()
@@ -52,6 +54,96 @@ class SettingsApiTests(unittest.TestCase):
         self.client.delete_cookie("session")
         response = self.client.get("/api/settings")
         self.assertEqual(response.status_code, 401)
+
+    def test_persistent_session_is_loaded_and_deleted_server_side(self):
+        stored = {
+            "token": "mock-encrypted-server-token",
+            "user": {"id": 101, "login": "user-one"},
+            "expires_at": 9999999999,
+            "repo": "test-owner/test-repo",
+            "installation_id": 5,
+        }
+        with patch("app.persistent_sessions_enabled", return_value=True), \
+             patch("app.load_login_session", return_value=stored) as load_session:
+            response = self.client.get("/api/auth/me")
+        self.assertTrue(response.json["authenticated"])
+        self.assertEqual(response.json["selected_repo"], "test-owner/test-repo")
+        self.assertNotIn("token", response.get_data(as_text=True))
+        load_session.assert_called_once()
+
+        with patch("app.persistent_sessions_enabled", return_value=True), \
+             patch("app.delete_login_session") as delete_session:
+            response = self.client.post("/api/auth/logout", json={})
+        self.assertEqual(response.status_code, 200)
+        delete_session.assert_called_once_with("test-sid")
+
+    def test_vercel_requires_stable_flask_key_and_sets_secure_cookie(self):
+        with patch.dict(os.environ, {
+            "VERCEL": "1",
+            "GITHUB_OAUTH_REDIRECT_URI": "https://issue-flow-ai.vercel.app/auth/github/callback",
+        }), \
+             patch("app.get_github_app_config", return_value=SimpleNamespace(flask_secret_key="fixed-test-key")), \
+             patch("app.init_db"):
+            vercel_app = app_module.create_app()
+        self.assertTrue(vercel_app.config["SESSION_COOKIE_SECURE"])
+        self.assertTrue(vercel_app.config["SESSION_COOKIE_HTTPONLY"])
+        self.assertEqual(vercel_app.config["SESSION_COOKIE_SAMESITE"], "Lax")
+
+        with patch.dict(os.environ, {
+            "VERCEL": "1",
+            "GITHUB_OAUTH_REDIRECT_URI": "https://issue-flow-ai.vercel.app/auth/github/callback",
+        }), \
+             patch("app.get_github_app_config", return_value=SimpleNamespace(flask_secret_key="")), \
+             patch("app.init_db"):
+            with self.assertRaisesRegex(RuntimeError, "FLASK_SECRET_KEY"):
+                app_module.create_app()
+
+    def test_oauth_callback_uri_is_stored_with_state_and_reused_on_exchange(self):
+        callback = "http://localhost/auth/github/callback"
+        with patch("app.oauth_redirect_uri", return_value=callback), \
+             patch("app.create_login_url", return_value=("https://github.test/authorize", "mock-state")) as authorize, \
+             patch("app.exchange_code", return_value="mock-github-token") as exchange, \
+             patch("app.get_current_user", return_value={"id": 303, "login": "mock-user"}):
+            login_response = self.client.get("/auth/github")
+            self.assertEqual(login_response.status_code, 302)
+            authorize.assert_called_once_with(callback)
+            with self.client.session_transaction() as browser_session:
+                self.assertEqual(browser_session["oauth_state"], "mock-state")
+                self.assertEqual(browser_session["oauth_redirect_uri"], callback)
+            response = self.client.get(
+                "/auth/github/callback?state=mock-state&code=mock-code"
+            )
+        self.assertEqual(response.status_code, 302)
+        exchange.assert_called_once_with("mock-code", redirect_uri=callback)
+        with self.client.session_transaction() as browser_session:
+            created_sid = browser_session.get("sid")
+        if created_sid:
+            app_module.LOGIN_SESSIONS.pop(created_sid, None)
+
+    def test_callback_uri_is_environment_specific_and_validated(self):
+        with patch.dict(os.environ, {
+            "VERCEL": "",
+            "GITHUB_OAUTH_REDIRECT_URI": "",
+        }), self.flask_app.test_request_context(
+            "/", base_url="http://localhost"
+        ):
+            self.assertEqual(
+                app_module.oauth_redirect_uri(),
+                "http://localhost/auth/github/callback",
+            )
+
+        production_callback = "https://issue-flow-ai.vercel.app/auth/github/callback"
+        with patch.dict(os.environ, {
+            "VERCEL": "1",
+            "GITHUB_OAUTH_REDIRECT_URI": production_callback,
+        }):
+            self.assertEqual(app_module.oauth_redirect_uri(), production_callback)
+        with patch.dict(os.environ, {
+            "VERCEL": "1",
+            "GITHUB_OAUTH_REDIRECT_URI": "http://issue-flow-ai.vercel.app/auth/github/callback",
+        }):
+            with self.assertRaisesRegex(RuntimeError, "형식"):
+                app_module.oauth_redirect_uri()
 
     def test_issue_crud_and_comments_routes_use_mocked_github_client(self):
         class FakeGitHub:

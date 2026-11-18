@@ -20,10 +20,14 @@ Copy-Item .env.example .env
 | `GITHUB_APP_ID` | GitHub App 식별자 |
 | `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` | 기존 GitHub OAuth 로그인 |
 | `GITHUB_APP_SLUG` | GitHub App 설치 링크 |
+| `GITHUB_OAUTH_REDIRECT_URI` | 로컬에서는 현재 호스트로 자동 구성. Vercel에서는 운영 Callback URL 필수 |
 | `FLASK_SECRET_KEY` | Flask 세션 서명 키 |
-| `DATA_ENCRYPTION_KEY` | 사용자별 API 키/Webhook을 SQLite에 암호화 저장 |
+| `DATA_ENCRYPTION_KEY` | 사용자별 API 키/Webhook과 Vercel OAuth 토큰 암호화 |
 | `ISSUEFLOW_DATABASE_PATH` | 선택 사항. SQLite 경로 (기본값 `instance/issueflow.sqlite3`) |
 | `COOKIE_SECURE` | HTTPS 배포에서 `true`; 로컬 HTTP는 기본 `false` |
+| `DATABASE_URL` | Vercel 전용 Neon PostgreSQL 연결 문자열. 로컬에서는 사용하지 않음 |
+
+로컬 실행에서는 `DATABASE_URL`을 설정해도 SQLite를 계속 사용합니다. Vercel 런타임의 `VERCEL=1`일 때만 Neon 연결로 전환됩니다.
 
 `DATA_ENCRYPTION_KEY`는 Flask 키와 별도로 생성하고 백업해야 합니다. 키를 잃으면 저장된 비밀 설정을 복호화할 수 없습니다. 로컬에서 다음 명령으로 Fernet 키를 생성해 환경변수에 직접 설정하세요. 생성된 키는 터미널에 표시되므로 공유하거나 저장소에 넣지 마세요.
 
@@ -51,11 +55,11 @@ python app.py
 
 ## 데이터 및 사용자 보안
 
-- SQLite 테이블은 서버 시작 시 `CREATE TABLE IF NOT EXISTS`로 안전하게 준비하며 기존 DB를 초기화하지 않습니다.
+- 로컬은 기존 SQLite를 계속 사용하고, `VERCEL=1`인 배포 환경만 `DATABASE_URL`의 PostgreSQL을 사용합니다. 테이블은 `CREATE TABLE IF NOT EXISTS`로 준비하며 SQLite 데이터를 이전·삭제하지 않습니다.
 - 사용자 OpenAI 키와 Discord Webhook은 `DATA_ENCRYPTION_KEY`로 암호화해 저장합니다. 브라우저 요청 헤더로 전달하거나 조회 응답으로 반환하지 않습니다.
-- GitHub OAuth state 검증, 서버 측 토큰 세션, 사용자 ID 기반 설정/분석 이력 조회, 같은 출처 변경 요청 검사, 보안 응답 헤더를 사용합니다.
-- 로그인 토큰은 현재 서버 메모리에 보관됩니다. 서버 재시작 후에는 GitHub에 다시 로그인해야 하며 토큰을 SQLite에 보관하지 않습니다.
-- SQLite에는 사용자 설정과 AI 분석 이력을 보관합니다. GitHub 원본 이슈/라벨/댓글은 GitHub에서 관리합니다.
+- GitHub OAuth state 검증, 사용자 ID 기반 설정/분석 이력 조회, 같은 출처 변경 요청 검사, 보안 응답 헤더를 사용합니다.
+- 로컬 OAuth 토큰 세션은 기존처럼 메모리에 유지합니다. Vercel에서는 세션 행을 PostgreSQL에 저장하고 GitHub 토큰은 `DATA_ENCRYPTION_KEY`로 암호화합니다. 브라우저 쿠키에는 서명된 세션 ID만 저장합니다.
+- 사용자 설정과 AI 분석 이력은 로컬에서는 SQLite, Vercel에서는 PostgreSQL에 저장합니다. GitHub 원본 이슈/라벨/댓글은 GitHub에서 관리합니다.
 - `.env`, `.sqlite3`, 가상환경 및 로그 파일은 `.gitignore` 대상입니다. 이미 Git 추적된 민감 파일은 별도로 `git ls-files`로 확인해야 합니다.
 
 ## GitHub Actions
@@ -76,14 +80,22 @@ python -m unittest discover -s tests -v
 
 현재 UI에는 이슈 생성·수정·닫기/재열기, 담당자·우선순위 설정, 댓글 CRUD, 최대 50개 이슈의 일괄 작업, 검색/상태/유형/우선순위/담당자 필터와 정렬, 라벨 기반 칸반 보기가 포함됩니다. 새 저장소 생성 시 README, 기본 라벨과 기본 이슈 템플릿을 선택할 수 있으며 기존 항목은 덮어쓰지 않습니다.
 
-기본 DB는 로컬 SQLite를 사용하므로 휘발성 파일시스템이나 다중 인스턴스 배포에는 적합하지 않습니다. 이번 작업은 배포 전환을 다루지 않습니다. 추후 배포 시에는 영속 디스크/백업, HTTPS와 secure 쿠키, `FLASK_SECRET_KEY` 및 `DATA_ENCRYPTION_KEY` 안전한 보관, OAuth callback URL, GitHub App 최소 권한, 로그/CSRF/요청 제한 점검이 필요합니다.
+## Vercel + Neon 배포
+
+1. Vercel에서 이 저장소를 연결하고 프로젝트 루트를 `app.py`가 있는 `IssueFlow-AI` 폴더로 지정합니다. `vercel.json`이 Flask Python Function 라우팅을 설정합니다.
+2. Vercel 프로젝트 환경변수에 `DATABASE_URL`을 등록합니다. Neon의 pooled connection 문자열 사용을 권장합니다. 이 값은 로컬 `.env`나 소스 코드에 복사하지 마세요.
+3. 기존 GitHub App 변수(`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`), `FLASK_SECRET_KEY`, `DATA_ENCRYPTION_KEY`도 Vercel 환경에 설정합니다. `GITHUB_OAUTH_REDIRECT_URI`에는 배포 도메인의 `/auth/github/callback`을 설정합니다. Flask 키와 암호화 키는 서로 다른 값이어야 하며 재배포 후에도 바꾸지 마세요.
+4. GitHub App의 OAuth callback URL을 배포 도메인의 `/auth/github/callback`으로 설정하고 재배포합니다. Vercel에서는 세션 쿠키의 Secure 속성이 자동 활성화됩니다.
+5. 최초 실행은 빈 PostgreSQL 테이블만 `IF NOT EXISTS`로 준비합니다. 기존 SQLite 내용은 자동 이전되지 않습니다.
+
+PostgreSQL 연결은 인스턴스별 크기 제한이 있는 psycopg 연결 풀을 사용합니다. 연결 문자열에는 비밀번호가 포함될 수 있으므로 로그나 클라이언트 응답에 출력하지 마세요. 실제 Neon 연결과 Vercel 배포는 로컬 테스트만으로 검증되지 않습니다.
 
 ## 파일 구조
 
 ```text
 app.py                         Flask 라우트, 인증, GitHub App 흐름
 agent/config.py                환경변수 및 서비스 설정
-agent/storage.py               SQLite 사용자 설정/분석 이력 및 암호화
+agent/storage.py               로컬 SQLite / Vercel PostgreSQL 및 세션 저장
 agent/analyzer.py              구조화된 GPT 이슈 분석
 agent/github_client.py         GitHub Issues API
 agent/service.py               분석과 승인 반영 흐름
