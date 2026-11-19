@@ -95,6 +95,45 @@ class StorageTests(unittest.TestCase):
             "total": 1, "applied": 0, "pending": 0, "failed": 1,
         })
 
+    def test_switching_repository_preserves_user_secrets_and_keeps_history_repo_scoped(self):
+        storage.save_settings(
+            "user-1", "sk-user-one", "https://discord.com/api/webhooks/12/token",
+            "owner/repo-a",
+        )
+        storage.save_settings("user-2", "sk-user-two", "", "owner/repo-b")
+        storage.save_analysis(
+            "user-1", "owner/repo-a", 4, "Repo A issue",
+            {"category": "bug"}, "complete",
+        )
+        storage.save_analysis(
+            "user-1", "owner/repo-b", 8, "Repo B issue",
+            {"category": "feature"}, "complete",
+        )
+        storage.save_analysis(
+            "user-2", "owner/repo-b", 9, "Other user's issue",
+            {"category": "question"}, "complete",
+        )
+
+        # A repository switch updates only the selected repository field.
+        storage.save_settings("user-1", "", "", "owner/repo-b")
+        settings = storage.get_settings("user-1")
+        self.assertEqual(settings, {
+            "openai_api_key": "sk-user-one",
+            "discord_webhook_url": "https://discord.com/api/webhooks/12/token",
+            "selected_repo": "owner/repo-b",
+        })
+        self.assertEqual(
+            [item["issue_title"] for item in storage.history("user-1", "owner/repo-a")],
+            ["Repo A issue"],
+        )
+        self.assertEqual(
+            [item["issue_title"] for item in storage.history("user-1", "owner/repo-b")],
+            ["Repo B issue"],
+        )
+        self.assertEqual(len(storage.history("user-2", "owner/repo-b")), 1)
+        self.assertEqual(storage.statistics("user-1", "owner/repo-a")["total"], 1)
+        self.assertEqual(storage.statistics("user-1", "owner/repo-b")["total"], 1)
+
     def test_clearing_analysis_history_preserves_other_users_settings_and_allows_new_history(self):
         storage.save_settings(
             "user-1", "sk-user-one", "https://discord.com/api/webhooks/12/token",

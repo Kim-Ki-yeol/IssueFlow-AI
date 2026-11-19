@@ -410,8 +410,13 @@ function resetWorkspace() {
 
   clearGithubUser();
   $('#setupForm').reset();
+  $('#integrationSettingsForm').reset();
+  $('#settingsOpenaiKey').value = '';
+  $('#settingsDiscord').value = '';
   $('#setupError').textContent = '';
   $('#repoSetupError').textContent = '';
+  $('#oauthLoginError').hidden = true;
+  $('#oauthLoginError').textContent = '';
   $('#setupRepoSearch').value = '';
   $('#issueSearch').value = '';
   ['issueStateFilter', 'issueTypeFilter', 'issuePriorityFilter', 'issueAssigneeFilter']
@@ -798,7 +803,42 @@ async function connectWorkspace(event) {
   }
 }
 
+function resetRepositoryScopedView() {
+  closeDrawer();
+  state.selected = null;
+  state.analysisHistoryId = null;
+  state.selectedIssues.clear();
+  state.issueDisplay = 'list';
+  state.issues = [];
+  state.activity = [];
+  state.assignees = [];
+
+  $('#issueSearch').value = '';
+  $('#issueStateFilter').value = 'all';
+  $('#issueTypeFilter').value = 'all';
+  $('#issuePriorityFilter').value = 'all';
+  $('#issueAssigneeFilter').value = 'all';
+  $('#issueSort').value = 'newest';
+  $('#selectAllIssues').checked = false;
+
+  renderIssues();
+  renderAssigneeFilters();
+  renderActivity();
+}
+
+function openRepositorySetup() {
+  if (loggingOut) return;
+  resetRepositoryScopedView();
+  state.selectedRepo = '';
+  $('#selectedRepoName').textContent = '';
+  $('#setupRepoSearch').value = '';
+  showSetupStep('setupRepository');
+  showRepositoryTab('select');
+  loadRepositories();
+}
+
 async function activateWorkspace() {
+  resetRepositoryScopedView();
   const [config, issues, activity, analysis, assignees] = await Promise.all([
     api('/api/config'), api('/api/issues'), api('/api/activity'),
     api('/api/analysis-history'), api('/api/assignees').catch(() => ({ items: [] }))
@@ -937,9 +977,13 @@ async function testIntegration(path) {
 }
 
 // GitHub 로그아웃
-async function disconnectWorkspace() {
+async function disconnectWorkspace(options = {}) {
   if (loggingOut) return;
-  if (!window.confirm('IssueFlow AI에서 로그아웃할까요?')) return;
+  const switchAccount = options?.switchAccount === true;
+  const confirmMessage = switchAccount
+    ? 'IssueFlow AI 세션을 종료하고 GitHub 로그인 화면으로 이동할까요? GitHub 웹 로그인은 종료되지 않습니다.'
+    : 'IssueFlow AI에서 로그아웃할까요?';
+  if (!window.confirm(confirmMessage)) return;
 
   loggingOut = true;
   connectionId++;
@@ -961,7 +1005,10 @@ async function disconnectWorkspace() {
     }
 
     resetWorkspace();
-    toast('IssueFlow AI에서 로그아웃되었습니다.');
+    if (switchAccount) showSetupStep('setupOauth');
+    toast(switchAccount
+      ? 'IssueFlow AI 세션을 종료했습니다. 로그인할 GitHub 계정을 확인해 주세요.'
+      : 'IssueFlow AI에서 로그아웃되었습니다.');
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -1980,6 +2027,10 @@ function registerEvents() {
   });
 
   $('#setupRepoSearch').addEventListener('input', renderRepositoryList);
+  $('#dashboardBackToRepositoryBtn').addEventListener('click', openRepositorySetup);
+  $('#otherGithubAccountBtn').addEventListener('click', () =>
+    disconnectWorkspace({ switchAccount: true })
+  );
   $('#installGithubAppBtn').addEventListener('click', () => {
     installationPageOpened = true;
   });
@@ -2006,10 +2057,7 @@ function registerEvents() {
   $('#clearDiscordBtn').addEventListener('click', () => clearIntegration('discord'));
 
   $('#changeRepoBtn').addEventListener('click', () => {
-    if (loggingOut) return;
-    state.selectedRepo = '';
-    showSetupStep('setupRepository');
-    loadRepositories();
+    openRepositorySetup();
   });
 
   $('#disconnectBtn').addEventListener('click', disconnectWorkspace);

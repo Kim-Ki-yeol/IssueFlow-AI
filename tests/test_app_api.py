@@ -245,6 +245,10 @@ class SettingsApiTests(unittest.TestCase):
 
     def test_local_logout_revokes_session_but_preserves_user_settings(self):
         storage.save_settings(101, "sk-mock-openai-key", "", "test-owner/test-repo")
+        storage.save_analysis(
+            101, "test-owner/test-repo", 12, "Saved before logout",
+            {"category": "bug"}, "complete",
+        )
         response = self.client.post("/api/auth/logout", json={})
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("test-sid", app_module.LOGIN_SESSIONS)
@@ -254,6 +258,114 @@ class SettingsApiTests(unittest.TestCase):
             storage.get_settings(101)["selected_repo"],
             "test-owner/test-repo",
         )
+        self.assertEqual(
+            [item["issue_title"] for item in storage.history(101, "test-owner/test-repo")],
+            ["Saved before logout"],
+        )
+
+    def test_account_settings_and_analysis_history_are_isolated_across_sessions(self):
+        other_sid = "account-b-sid"
+        other_token = "account-b-mock-token"
+        repo_a = "test-owner/test-repo"
+        repo_b = "other-owner/other-repo"
+        storage.save_settings(
+            101, "sk-user-a-only", "https://discord.com/api/webhooks/123/user-a",
+            repo_a,
+        )
+        storage.save_analysis(
+            101, repo_a, 11, "Account A issue",
+            {"category": "bug", "summary": "A-only result"}, "complete",
+        )
+        app_module.LOGIN_SESSIONS[other_sid] = app_module.LoginSession(
+            token=other_token,
+            user={"id": 202, "login": "user-two"},
+            expires_at=9999999999,
+            repo=repo_b,
+            installation_id=7,
+        )
+        other_client = self.flask_app.test_client()
+        with other_client.session_transaction() as browser_session:
+            browser_session["sid"] = other_sid
+
+        class FakeGitHub:
+            @staticmethod
+            def get_issue(number):
+                return {
+                    "number": number, "title": "Account B issue", "body": "",
+                    "labels": [], "html_url": "https://github.com/other-owner/other-repo/issues/12",
+                }
+
+            @staticmethod
+            def recent_commits():
+                return []
+
+        def repositories(token, installation_id):
+            if token == "non-production-test-token" and installation_id == 5:
+                return [{"full_name": repo_a}]
+            if token == other_token and installation_id == 7:
+                return [{"full_name": repo_b}]
+            self.fail("Repository access must use the authenticated user's session")
+
+        try:
+            with patch("app.get_installation_repositories", side_effect=repositories), \
+                 patch("agent.service.GitHubClient", return_value=FakeGitHub()), \
+                 patch("agent.service.analyze_issue") as analyze_issue:
+                settings_a = self.client.get("/api/settings")
+                settings_b = other_client.get("/api/settings")
+                history_a = self.client.get("/api/analysis-history")
+                history_b = other_client.get("/api/analysis-history")
+                blocked = other_client.post("/api/issues/12/analyze", json={})
+                discord_unavailable = other_client.post(
+                    "/api/settings/test-discord", json={}
+                )
+
+            self.assertTrue(settings_a.json["openai_configured"])
+            self.assertTrue(settings_a.json["discord_configured"])
+            self.assertFalse(settings_b.json["openai_configured"])
+            self.assertFalse(settings_b.json["discord_configured"])
+            self.assertNotIn("sk-user-a-only", settings_b.get_data(as_text=True))
+            self.assertNotIn("user-a", settings_b.get_data(as_text=True))
+            self.assertEqual([item["issue_title"] for item in history_a.json["items"]],
+                             ["Account A issue"])
+            self.assertEqual(history_b.json["items"], [])
+            self.assertEqual(blocked.status_code, 409)
+            self.assertEqual(blocked.json["code"], "OPENAI_API_KEY_REQUIRED")
+            analyze_issue.assert_not_called()
+            self.assertEqual(discord_unavailable.status_code, 400)
+            self.assertIn("먼저 Discord Webhook", discord_unavailable.json["error"])
+
+            own_key = other_client.put("/api/settings", json={
+                "openai_api_key": "sk-user-b-only",
+                "discord_webhook_url": "",
+            })
+            self.assertEqual(own_key.status_code, 200)
+            self.assertTrue(own_key.json["openai_configured"])
+
+            analysis = {
+                "category": "bug", "priority": "medium", "area": "API",
+                "summary": "Account B analysis", "probable_cause": "검토 필요",
+                "suggestions": ["로그 확인"], "check_recent_commits": False,
+                "solution": "확인", "recommended_labels": ["bug"],
+            }
+            with patch("app.get_installation_repositories", side_effect=repositories), \
+                 patch("agent.service.GitHubClient", return_value=FakeGitHub()), \
+                 patch("agent.service.analyze_issue", return_value=analysis):
+                analyzed = other_client.post("/api/issues/12/analyze", json={})
+                history_b_after = other_client.get("/api/analysis-history")
+
+            self.assertEqual(analyzed.status_code, 200)
+            self.assertEqual(
+                [item["issue_title"] for item in history_b_after.json["items"]],
+                ["Account B issue"],
+            )
+            self.assertEqual(
+                [item["issue_title"] for item in storage.history(101, repo_a)],
+                ["Account A issue"],
+            )
+            self.assertEqual(storage.get_settings(101)["openai_api_key"], "sk-user-a-only")
+            self.assertEqual(storage.get_settings(202)["openai_api_key"], "sk-user-b-only")
+        finally:
+            app_module.LOGIN_SESSIONS.pop(other_sid, None)
 
     def test_flask_serves_frontend_assets_and_vercel_checks_filesystem_first(self):
         home = self.client.get("/")
@@ -267,6 +379,10 @@ class SettingsApiTests(unittest.TestCase):
         self.assertRegex(markup, r'<button id="welcomeStartBtn"[^>]*type="button"')
         self.assertRegex(markup, r'<section id="setupOauth"[^>]*hidden')
         self.assertRegex(markup, r'<a id="githubLoginBtn"[^>]*href="/auth/github"')
+        self.assertIn('id="dashboardBackToRepositoryBtn"', markup)
+        self.assertIn('id="otherGithubAccountBtn"', markup)
+        self.assertIn("GitHub 브라우저 로그인은 유지됩니다.", markup)
+        self.assertIn("GitHub에 로그인된 계정이 자동 선택될 수 있습니다.", markup)
         self.assertEqual(js.status_code, 200)
         self.assertEqual(css.status_code, 200)
         self.assertIn("javascript", js.mimetype)
@@ -275,6 +391,10 @@ class SettingsApiTests(unittest.TestCase):
         self.assertIn('id="clearDiscordBtn"', markup)
         self.assertIn("clearOpenaiBtn').addEventListener('click'", script)
         self.assertIn("clearDiscordBtn').addEventListener('click'", script)
+        self.assertIn("dashboardBackToRepositoryBtn').addEventListener('click', openRepositorySetup)", script)
+        self.assertIn("otherGithubAccountBtn').addEventListener('click'", script)
+        self.assertIn("disconnectWorkspace({ switchAccount: true })", script)
+        self.assertIn("resetRepositoryScopedView()", script)
         self.assertIn('id="clearAnalysisHistoryBtn"', markup)
         self.assertIn("clearAnalysisHistoryBtn').addEventListener('click'", script)
         self.assertIn("renderAnalysisStats(result.statistics)", script)
@@ -390,7 +510,15 @@ class SettingsApiTests(unittest.TestCase):
 
     def test_relogin_requires_repository_selection_and_preserves_saved_settings(self):
         callback = "http://localhost/auth/github/callback"
-        storage.save_settings(303, "sk-mock-user-key", "", "test-owner/test-repo")
+        storage.save_settings(
+            303, "sk-mock-user-key",
+            "https://discord.com/api/webhooks/123/user-303",
+            "test-owner/test-repo",
+        )
+        storage.save_analysis(
+            303, "test-owner/test-repo", 6, "Existing repository history",
+            {"category": "bug"}, "complete",
+        )
         with patch("app.oauth_redirect_uri", return_value=callback), \
              patch("app.create_login_url", return_value=("https://github.test/authorize", "state-relogin")), \
              patch("app.exchange_code", return_value="mock-github-token") as exchange, \
@@ -411,6 +539,10 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(
             storage.get_settings(303)["selected_repo"],
             "test-owner/test-repo",
+        )
+        self.assertEqual(
+            [item["issue_title"] for item in storage.history(303, "test-owner/test-repo")],
+            ["Existing repository history"],
         )
         exchange.assert_called_once_with("mock-code", redirect_uri=callback)
 
@@ -448,6 +580,27 @@ class SettingsApiTests(unittest.TestCase):
         settings = storage.get_settings(303)
         self.assertEqual(settings["selected_repo"], "test-owner/other-repo")
         self.assertEqual(settings["openai_api_key"], "sk-mock-user-key")
+        self.assertEqual(
+            settings["discord_webhook_url"],
+            "https://discord.com/api/webhooks/123/user-303",
+        )
+        storage.save_analysis(
+            303, "test-owner/other-repo", 7, "Other repository history",
+            {"category": "feature"}, "complete",
+        )
+        self.assertEqual(
+            [item["issue_title"] for item in storage.history(303, "test-owner/test-repo")],
+            ["Existing repository history"],
+        )
+        with patch(
+            "app.get_installation_repositories",
+            return_value=[{"full_name": "test-owner/other-repo"}],
+        ), patch("agent.service.GitHubClient"):
+            selected_history = self.client.get("/api/analysis-history")
+        self.assertEqual(
+            [item["issue_title"] for item in selected_history.json["items"]],
+            ["Other repository history"],
+        )
         with self.client.session_transaction() as browser_session:
             created_sid = browser_session.get("sid")
         if created_sid:
