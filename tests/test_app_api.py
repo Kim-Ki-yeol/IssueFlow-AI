@@ -134,6 +134,78 @@ class SettingsApiTests(unittest.TestCase):
         self.assertGreater(new_id, 0)
         self.assertEqual(storage.statistics(101, "test-owner/test-repo")["total"], 1)
 
+    def test_installations_and_partial_repository_access_use_only_current_oauth_user(self):
+        other_sid = "other-user-sid"
+        app_module.LOGIN_SESSIONS[other_sid] = app_module.LoginSession(
+            token="other-user-mock-token",
+            user={"id": 202, "login": "user-two"},
+            expires_at=9999999999,
+        )
+        other_client = self.flask_app.test_client()
+        with other_client.session_transaction() as browser_session:
+            browser_session["sid"] = other_sid
+
+        def list_installations(token):
+            if token == "non-production-test-token":
+                return [{"id": 505, "account": "user-one", "repository_selection": "selected"}]
+            if token == "other-user-mock-token":
+                return []
+            self.fail("Unexpected OAuth token used for installation lookup")
+
+        def list_repositories(token, installation_id):
+            if token == "non-production-test-token" and installation_id == 505:
+                return [{"full_name": "user-one/approved-repo"}]
+            if token == "other-user-mock-token":
+                return []
+            self.fail("Unexpected OAuth token used for repository lookup")
+
+        try:
+            with patch("app.get_installations", side_effect=list_installations) as get_installs, \
+                 patch("app.get_installation_repositories", side_effect=list_repositories) as get_repos:
+                first_user = self.client.get("/api/github/installations")
+                first_repositories = self.client.get(
+                    "/api/github/installations/505/repositories"
+                )
+                second_user = other_client.get("/api/github/installations")
+                second_repositories = other_client.get(
+                    "/api/github/installations/505/repositories"
+                )
+            self.assertEqual(first_user.json["items"][0]["id"], 505)
+            self.assertEqual(
+                first_repositories.json["items"],
+                [{"full_name": "user-one/approved-repo"}],
+            )
+            self.assertEqual(second_user.json["items"], [])
+            self.assertEqual(second_repositories.json["items"], [])
+            get_installs.assert_any_call("non-production-test-token")
+            get_installs.assert_any_call("other-user-mock-token")
+            get_repos.assert_any_call("non-production-test-token", 505)
+            get_repos.assert_any_call("other-user-mock-token", 505)
+        finally:
+            app_module.LOGIN_SESSIONS.pop(other_sid, None)
+
+    def test_installation_lookup_failure_is_not_reported_as_uninstalled(self):
+        with patch(
+            "app.get_installations",
+            side_effect=app_module.GitHubAuthError("GitHub lookup unavailable"),
+        ):
+            response = self.client.get("/api/github/installations")
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("items", response.json)
+
+    def test_repository_creation_permission_error_does_not_claim_app_is_uninstalled(self):
+        class Denied:
+            status_code = 403
+
+        with patch("app.requests.post", return_value=Denied()):
+            response = self.client.post("/api/github/repositories", json={
+                "name": "mock-repository",
+                "private": True,
+            })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("App 설치 여부와 별개", response.json["error"])
+        self.assertIn("계정의 저장소 생성 권한", response.json["error"])
+
     def test_missing_user_openai_key_blocks_analysis_without_history_or_global_fallback(self):
         class FakeGitHub:
             pass
@@ -169,6 +241,7 @@ class SettingsApiTests(unittest.TestCase):
             self.client.delete("/api/analysis-history", json={}).status_code,
             401,
         )
+        self.assertEqual(self.client.get("/api/github/installations").status_code, 401)
 
     def test_local_logout_revokes_session_but_preserves_user_settings(self):
         storage.save_settings(101, "sk-mock-openai-key", "", "test-owner/test-repo")
@@ -205,6 +278,17 @@ class SettingsApiTests(unittest.TestCase):
         self.assertIn('id="clearAnalysisHistoryBtn"', markup)
         self.assertIn("clearAnalysisHistoryBtn').addEventListener('click'", script)
         self.assertIn("renderAnalysisStats(result.statistics)", script)
+        self.assertIn('id="githubAppNotice"', markup)
+        self.assertIn('href="https://github.com/apps/issueflow-ai-giyeol/installations/new"', markup)
+        self.assertIn('target="_blank"', markup)
+        self.assertIn('id="recheckGithubAppBtn"', markup)
+        self.assertIn("renderGithubAppNotice('missing')", script)
+        self.assertIn("'check-error'", script)
+        self.assertIn("refreshInstallationAfterReturn", script)
+        self.assertIn("installGithubAppBtn').addEventListener('click'", script)
+        self.assertIn("installationPageOpened = true", script)
+        self.assertIn("recheckGithubAppBtn').addEventListener('click'", script)
+        self.assertIn("window.addEventListener('focus', refreshInstallationAfterReturn)", script)
         self.assertIn("state.config?.ai_enabled", script)
         self.assertIn("OPENAI_API_KEY_REQUIRED", script)
         self.assertIn("clearOpenaiBtn').addEventListener('click'", script)

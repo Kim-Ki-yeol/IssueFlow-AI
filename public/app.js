@@ -8,7 +8,7 @@ const state = {
   config: null, issues: [], activity: [], selected: null,
   busy: false, view: 'dashboard', repositories: [], assignees: [],
   selectedIssues: new Set(), issueDisplay: 'list',
-  selectedRepo: '', analysisHistoryId: null,
+  selectedRepo: '', analysisHistoryId: null, githubAppStatus: 'unknown',
   connected: false
 };
 
@@ -16,6 +16,9 @@ let connectionId = 0;
 let loggingOut = false;
 let authCheckId = 0;
 let clearingAnalysisHistory = false;
+let repositoryLoadId = 0;
+let recheckingInstallation = false;
+let installationPageOpened = false;
 
 const icons = {
   check: 'i-check', spark: 'i-spark', circle: 'i-circle',
@@ -398,8 +401,12 @@ function resetWorkspace() {
     busy: false, view: 'dashboard', repositories: [],
     assignees: [], selectedIssues: new Set(), issueDisplay: 'list',
     selectedRepo: '', analysisHistoryId: null,
+    githubAppStatus: 'unknown',
     connected: false
   });
+  repositoryLoadId++;
+  recheckingInstallation = false;
+  installationPageOpened = false;
 
   clearGithubUser();
   $('#setupForm').reset();
@@ -489,37 +496,122 @@ async function retryLoginCheck() {
   }
 }
 
-// GitHub App 설치된 저장소 조회
+function renderGithubAppNotice(type, detail = '') {
+  const notice = $('#githubAppNotice');
+  const title = $('#githubAppNoticeTitle');
+  const message = $('#githubAppNoticeMessage');
+  const install = $('#installGithubAppBtn');
+  const retry = $('#recheckGithubAppBtn');
+  const content = {
+    missing: {
+      title: 'GitHub App 설치가 필요합니다.',
+      message: '현재 로그인한 계정에서 IssueFlow AI 앱 설치를 확인하지 못했습니다. GitHub 공식 설치 페이지에서 계정과 저장소 접근 범위를 선택한 뒤 돌아와 설치 상태를 확인해 주세요.',
+      link: 'GitHub App 설치하기',
+      retry: '설치 확인'
+    },
+    'no-repositories': {
+      title: 'GitHub App 설치는 확인됐습니다.',
+      message: '현재 계정에서 접근이 허용된 저장소가 없습니다. GitHub 설치 설정에서 사용할 저장소 접근을 승인한 뒤 다시 불러와 주세요.',
+      link: 'GitHub App 저장소 권한 확인',
+      retry: '저장소 다시 불러오기'
+    },
+    'check-error': {
+      title: 'GitHub App 설치 상태를 확인할 수 없습니다.',
+      message: `연결 또는 권한 확인에 실패했습니다. 미설치로 판단하지 않았습니다. 잠시 후 다시 시도해 주세요.${detail ? ` (${detail})` : ''}`,
+      link: '',
+      retry: '다시 확인'
+    },
+    'repository-error': {
+      title: 'GitHub App 설치는 확인됐지만 저장소 접근을 확인할 수 없습니다.',
+      message: `설치 여부와 저장소 접근 권한은 별도입니다. 저장소 목록 조회에 실패했습니다. 다시 시도하거나 GitHub 설치 설정을 확인해 주세요.${detail ? ` (${detail})` : ''}`,
+      link: 'GitHub App 저장소 권한 확인',
+      retry: '저장소 다시 불러오기'
+    }
+  }[type];
+
+  notice.hidden = !content;
+  if (!content) return;
+  notice.dataset.state = type;
+  title.textContent = content.title;
+  message.textContent = content.message;
+  install.hidden = !content.link;
+  install.textContent = content.link;
+  retry.textContent = content.retry;
+}
+
+function refreshInstallationAfterReturn() {
+  if (!installationPageOpened || document.visibilityState === 'hidden') return;
+  installationPageOpened = false;
+  if (!$('#setupRepository').hidden && !loggingOut) return loadRepositories();
+}
+
+// 현재 로그인 사용자의 GitHub App 설치 및 저장소 접근 조회
 async function loadRepositories() {
-  if (loggingOut) return;
+  if (loggingOut || recheckingInstallation) return;
 
   const list = $('#setupRepoList');
   const id = connectionId;
+  const loadId = ++repositoryLoadId;
+  let installationsConfirmed = false;
+  let accessibleRepositories = [];
+  recheckingInstallation = true;
   list.textContent = '저장소 목록을 불러오는 중입니다.';
+  $('#repoSetupError').textContent = '';
+  $('#recheckGithubAppBtn').disabled = true;
 
   try {
     const installations = await api('/api/github/installations');
-    const all = [];
+    if (loggingOut || id !== connectionId || loadId !== repositoryLoadId) return;
+    if (!Array.isArray(installations.items)) {
+      throw new Error('GitHub App 설치 목록 응답을 확인할 수 없습니다.');
+    }
+    installationsConfirmed = true;
+
+    if (!installations.items.length) {
+      state.githubAppStatus = 'missing';
+      state.repositories = [];
+      renderGithubAppNotice('missing');
+      renderRepositoryList();
+      return;
+    }
+    state.githubAppStatus = 'installed';
 
     for (const installation of installations.items || []) {
-      if (loggingOut || id !== connectionId) return;
+      if (loggingOut || id !== connectionId || loadId !== repositoryLoadId) return;
 
       const result = await api(
         `/api/github/installations/${installation.id}/repositories`
       );
+      if (loggingOut || id !== connectionId || loadId !== repositoryLoadId) return;
+      if (!Array.isArray(result.items)) {
+        throw new Error('GitHub 저장소 접근 목록 응답을 확인할 수 없습니다.');
+      }
 
-      for (const repo of result.items || []) {
-        all.push({ ...repo, installation_id: installation.id });
+      for (const repo of result.items) {
+        accessibleRepositories.push({ ...repo, installation_id: installation.id });
       }
     }
 
-    if (loggingOut || id !== connectionId) return;
-    state.repositories = all;
+    state.githubAppStatus = 'installed';
+    state.repositories = accessibleRepositories;
+    renderGithubAppNotice(accessibleRepositories.length ? '' : 'no-repositories');
     renderRepositoryList();
   } catch (error) {
-    if (loggingOut || id !== connectionId) return;
-    list.textContent = '저장소를 불러오지 못했습니다.';
-    $('#repoSetupError').textContent = error.message;
+    if (loggingOut || id !== connectionId || loadId !== repositoryLoadId) return;
+    state.repositories = accessibleRepositories;
+    renderGithubAppNotice(
+      installationsConfirmed ? 'repository-error' : 'check-error',
+      error.message
+    );
+    if (accessibleRepositories.length) renderRepositoryList();
+    else list.textContent = installationsConfirmed
+      ? 'GitHub App 설치는 확인됐지만 저장소 접근 목록을 불러오지 못했습니다.'
+      : 'GitHub App 설치 상태를 확인할 수 없습니다. 위 안내에서 다시 시도해 주세요.';
+  } finally {
+    if (loadId === repositoryLoadId) {
+      recheckingInstallation = false;
+      $('#recheckGithubAppBtn').disabled = false;
+    }
   }
 }
 
@@ -535,9 +627,15 @@ function renderRepositoryList() {
   if (!repositories.length) {
     const empty = document.createElement('p');
     empty.className = 'setup-hint';
-    empty.textContent = state.repositories.length
-      ? '검색 결과가 없습니다.'
-      : '연결 가능한 저장소가 없습니다. GitHub App 설치를 확인해 주세요.';
+    if (state.repositories.length) {
+      empty.textContent = '검색 결과가 없습니다.';
+    } else if (state.githubAppStatus === 'missing') {
+      empty.textContent = 'GitHub App 설치를 확인하면 접근 가능한 저장소가 표시됩니다.';
+    } else if (state.githubAppStatus === 'installed') {
+      empty.textContent = '설치는 확인됐지만 접근 가능한 저장소가 없습니다. 위에서 GitHub App 저장소 권한을 확인해 주세요.';
+    } else {
+      empty.textContent = '설치 상태 확인 후 저장소 목록을 표시합니다.';
+    }
     list.appendChild(empty);
     return;
   }
@@ -1882,6 +1980,15 @@ function registerEvents() {
   });
 
   $('#setupRepoSearch').addEventListener('input', renderRepositoryList);
+  $('#installGithubAppBtn').addEventListener('click', () => {
+    installationPageOpened = true;
+  });
+  $('#recheckGithubAppBtn').addEventListener('click', () => {
+    installationPageOpened = false;
+    loadRepositories();
+  });
+  window.addEventListener('focus', refreshInstallationAfterReturn);
+  document.addEventListener('visibilitychange', refreshInstallationAfterReturn);
   $('#createRepoForm').addEventListener('submit', createRepository);
   $('#setupForm').addEventListener('submit', connectWorkspace);
   $('#createIssueForm').addEventListener('submit', submitNewIssue);

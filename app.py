@@ -680,7 +680,7 @@ def create_app() -> Flask:
 
         if response.status_code == 403:
             raise ValueError(
-                "저장소 생성 권한이 없습니다. GitHub App 권한을 확인해 주세요."
+                "저장소 생성 요청이 GitHub에서 거부되었습니다(403). App 설치 여부와 별개로 계정의 저장소 생성 권한, App 권한 승인 또는 조직 정책을 확인해 주세요."
             )
 
         if response.status_code == 422:
